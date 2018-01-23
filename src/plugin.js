@@ -16,7 +16,7 @@ module.exports = function(app) {
     const chartsPath = props.chartsPath ? path.resolve(configBasePath, props.chartsPath) : defaultChartsPath
     debug(`Start plugin, charts path: ${chartsPath}`)
     const loadProviders = Charts.findCharts(chartsPath)
-    loadProviders.then(charts => {
+    return loadProviders.then(charts => {
       console.log(`Chart plugin: Found ${_.keys(charts).length} charts`)
       chartProviders = charts
       // Do not register routes if plugin has been started once already

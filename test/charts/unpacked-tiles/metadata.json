@@ -1,0 +1,15 @@
+{
+    "profile": "mercator", 
+    "attribution": "NOAA", 
+    "name": "NOAA MBTiles test file", 
+    "format": "png", 
+    "basename": "MBTILES_19", 
+    "bounds": "-82.265625, 36.5978891331, -61.875, 31.952162238", 
+    "minzoom": "3", 
+    "version": "1", 
+    "maxzoom": "4", 
+    "tilejson": "2.0.0", 
+    "scheme": "xyz", 
+    "type": "overlay", 
+    "description": "CAROLINAS"
+}
