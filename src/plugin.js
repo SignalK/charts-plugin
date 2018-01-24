@@ -78,7 +78,7 @@ module.exports = function(app) {
         chartsPath: {
           type: 'string',
           title: "Charts path",
-          description: `Path for chart files, relative to "${configBasePath}"`
+          description: `Path for chart files, relative to "${configBasePath}". Defaults to "${defaultChartsPath}".`
         }
       }
     },
