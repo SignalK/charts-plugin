@@ -1,6 +1,6 @@
 # Signal K Node server Charts plugin
 
-Signal K Node server plugin to provide chart support.
+Signal K Node server plugin to provide chart metadata, such as name, description and location of the actual chart tile data.
 
 ### Usage
 
@@ -10,23 +10,22 @@ Signal K Node server plugin to provide chart support.
 
 ![Configuration options](https://user-images.githubusercontent.com/1435910/35300372-df2871de-0090-11e8-87db-b81cb775ed32.png)
 
-3. Put charts into selected directory
+3. Put charts into selected path
 
 4. Activate plugin
 
-5. Use one of the apps supporting Signal K charts.
-Example apps:
-- [Tuktuk Chart Plotter](https://github.com/vokkim/tuktuk-chart-plotter)
-- [Freeboard-SK](https://github.com/SignalK/freeboard-sk)
+5. Use one of the client apps supporting Signal K charts, for example:
+- [Freeboard SK](https://www.npmjs.com/package/@signalk/freeboard-sk)
+- [Tuktuk Chart Plotter](https://www.npmjs.com/package/tuktuk-chart-plotter)
 
-### Supported chart files
+### Supported chart formats
 
-- MBTiles
-- Directory with cached TMS tiles and `tilemapresource.xml`
+- [MBTiles](https://github.com/mapbox/mbtiles-spec) file
+- Directory with cached [TMS](https://wiki.osgeo.org/wiki/Tile_Map_Service_Specification) tiles and `tilemapresource.xml`
 - Directory with XYZ tiles and `metadata.json`
 
 Publicly available MBTiles charts can be found from:
-- [NOAA Nautical charts](http://tileservice.charts.noaa.gov/)
+- [NOAA Nautical charts](http://tileservice.charts.noaa.gov/), quick download [cheat-sheet](https://github.com/vokkim/noaa-nautical-charts)
 - [Finnish Transport Agency nautical charts](https://github.com/vokkim/rannikkokartat-mbtiles)
 - [Signal K World Coastline Map](https://github.com/netAction/signalk-world-coastline-map), download [MBTiles release](https://github.com/netAction/signalk-world-coastline-map/releases/download/v1.0/signalk-world-coastline-map-database.tgz)
 
@@ -40,7 +39,7 @@ Plugin adds support for `/resources/charts` endpoints described in [Signal K spe
 
 License
 -------
-Copyright [2018] [Mikko Vesikkala]
+Copyright 2018 Mikko Vesikkala
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.

@@ -17,7 +17,7 @@ module.exports = function(app) {
     debug(`Start plugin, charts path: ${chartsPath}`)
     const loadProviders = Charts.findCharts(chartsPath)
     return loadProviders.then(charts => {
-      console.log(`Chart plugin: Found ${_.keys(charts).length} charts`)
+      console.log(`Chart plugin: Found ${_.keys(charts).length} charts from ${chartsPath}`)
       chartProviders = charts
       // Do not register routes if plugin has been started once already
       pluginStarted === false && registerRoutes()
