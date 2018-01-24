@@ -25,13 +25,6 @@ function findCharts(chartBaseDir) {
       })
     })
     .then(result => _.filter(result, _.identity))
-    .then(charts => _.filter(charts, chart => {
-      if (!chart.format) {
-        console.error(`Missing format for chart ${chart.identifier}`)
-        return false
-      }
-      return true
-    }))
     .then(charts => _.reduce(charts, (result, chart) => {
       result[chart.identifier] = chart
       return result
@@ -150,6 +143,10 @@ function directoryToMapInfo(file, identifier) {
   return loadInfo()
     .then(info => {
       if (info) {
+        if (!info.format) {
+          console.error(`Missing format metadata for chart ${identifier}`)
+          return null
+        }
         return _.merge(info, {
           identifier,
           _fileFormat: 'directory',
@@ -160,7 +157,7 @@ function directoryToMapInfo(file, identifier) {
       return null
     })
     .catch(e => {
-      console.error(`Error getting charts from ${file}`, e.messge)
+      console.error(`Error getting charts from ${file}`, e.message)
       return undefined
     })
 }
