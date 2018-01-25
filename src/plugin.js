@@ -62,7 +62,7 @@ module.exports = function(app) {
     })
 
     app.get(apiRoutePrefix + "/charts", (req, res) => {
-      const sanitized = _.map(_.values(chartProviders), sanitizeProvider)
+      const sanitized = _.mapValues(chartProviders, sanitizeProvider)
       res.json(sanitized)
     })
   }

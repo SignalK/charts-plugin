@@ -30,11 +30,7 @@ describe('GET /resources/charts', () => {
       .then(result => {
         expect(result.status).to.equal(200)
         const resultCharts = result.body
-        expect(resultCharts.length).to.equal(3)
-        expectedCharts.map(expectedChart => {
-          const match = resultCharts.find(c => c.identifier === expectedChart.identifier)
-          expect(match).to.deep.equal(expectedChart)
-        })
+        expect(resultCharts).to.deep.equal(expectedCharts)
       })
   })
 
@@ -43,17 +39,17 @@ describe('GET /resources/charts', () => {
       .then(() => get(testServer, '/signalk/v1/api/resources/charts'))
       .then(result => {
         expect(result.status).to.equal(200)
-        expect(result.body.length).to.equal(0)
+        expect(result.body).to.deep.equal({})
       })
   })
 
   it('returns one chart', () => {
-    const expectedChart = expectedCharts[0]
+    const identifier = 'test'
     return plugin.start({})
-      .then(() => get(testServer, `/signalk/v1/api/resources/charts/${expectedChart.identifier}`))
+      .then(() => get(testServer, `/signalk/v1/api/resources/charts/${identifier}`))
       .then(result => {
         expect(result.status).to.equal(200)
-        expect(result.body).to.deep.equal(expectedChart)
+        expect(result.body).to.deep.equal(expectedCharts[identifier])
       })
   })
 
@@ -67,7 +63,7 @@ describe('GET /resources/charts', () => {
   })
 })
 
-describe.only('GET /resources/charts/:identifier/:z/:x/:y', () => {
+describe('GET /resources/charts/:identifier/:z/:x/:y', () => {
   let plugin
   let testServer
   beforeEach(() =>

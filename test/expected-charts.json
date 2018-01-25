@@ -1,5 +1,5 @@
-[
-  {
+{
+  "test": {
     "bounds": [
       -82.265625,
       36.5978891331,
@@ -16,7 +16,7 @@
     "tilemapUrl": "/signalk/v1/api/resources/charts/test/{z}/{x}/{y}",
     "type": "tilelayer"
   },
-  {
+  "tms-tiles": {
     "bounds": [
       6.924150554004035,
       53.14584310531994,
@@ -33,7 +33,7 @@
     "tilemapUrl": "/signalk/v1/api/resources/charts/tms-tiles/{z}/{x}/{y}",
     "type": "tilelayer"
   },
-  {
+  "unpacked-tiles": {
     "bounds": [
       -82.265625,
       36.5978891331,
@@ -50,4 +50,4 @@
     "tilemapUrl": "/signalk/v1/api/resources/charts/unpacked-tiles/{z}/{x}/{y}",
     "type": "tilelayer"
   }
-]
+}
