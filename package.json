@@ -1,6 +1,6 @@
 {
   "name": "@signalk/charts-plugin",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Signal K plugin to provide chart support for Signal K server",
   "main": "index.js",
   "scripts": {
