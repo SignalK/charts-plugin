@@ -6,11 +6,11 @@ Signal K Node server plugin to provide chart metadata, such as name, description
 
 1. Install "Signal K Charts" plugin from Signal K Appstore
 
-2. Specify "Charts path" in plugin configuration. Defaults to `${signalk-configuration-path}/charts`
+2. Add "Chart paths" in plugin configuration. Defaults to `${signalk-configuration-path}/charts`
 
-![Configuration options](https://user-images.githubusercontent.com/1435910/35300372-df2871de-0090-11e8-87db-b81cb775ed32.png)
+![Configuration options](https://user-images.githubusercontent.com/1435910/39382493-57c1e4dc-4a6e-11e8-93e1-cedb4c7662f4.png)
 
-3. Put charts into selected path
+3. Put charts into selected paths
 
 4. Activate plugin
 

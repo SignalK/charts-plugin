@@ -1,4 +1,5 @@
 const debug = require('debug')('signalk-charts-plugin')
+const Promise = require('bluebird')
 const _ = require('lodash')
 const path = require('path')
 const fs = require('fs')
@@ -13,11 +14,15 @@ module.exports = function(app) {
   ensureDirectoryExists(defaultChartsPath)
 
   function start(props) {
-    const chartsPath = props.chartsPath ? path.resolve(configBasePath, props.chartsPath) : defaultChartsPath
-    debug(`Start plugin, charts path: ${chartsPath}`)
-    const loadProviders = Charts.findCharts(chartsPath)
+    const chartPaths = _.isEmpty(props.chartPaths)
+      ? [defaultChartsPath]
+      : resolveUniqueChartPaths(props.chartPaths, configBasePath)
+    debug(`Start plugin, chart paths: ${chartPaths.join(', ')}`)
+
+    const loadProviders = Promise.mapSeries(chartPaths, chartPath => Charts.findCharts(chartPath))
+      .then(list => _.reduce(list, (result, charts) => _.merge({}, result, charts), {}))
     return loadProviders.then(charts => {
-      console.log(`Chart plugin: Found ${_.keys(charts).length} charts from ${chartsPath}`)
+      console.log(`Chart plugin: Found ${_.keys(charts).length} charts from ${chartPaths.join(', ')}`)
       chartProviders = charts
       // Do not register routes if plugin has been started once already
       pluginStarted === false && registerRoutes()
@@ -73,12 +78,17 @@ module.exports = function(app) {
     description: 'Singal K Charts resource',
     schema: {
       title: 'Signal K Charts',
+      description: `Add one or more paths to find charts. Defaults to "${defaultChartsPath}"`,
       type: 'object',
       properties: {
-        chartsPath: {
-          type: 'string',
-          title: "Charts path",
-          description: `Path for chart files, relative to "${configBasePath}". Defaults to "${defaultChartsPath}".`
+        chartPaths: {
+          type: 'array',
+          title: 'Chart paths',
+          items: {
+            type: 'string',
+            title: "Path",
+            description: `Path for chart files, relative to "${configBasePath}"`
+          }
         }
       }
     },
@@ -92,6 +102,11 @@ const responseHttpOptions = {
   headers: {
     'Cache-Control': 'public, max-age=7776000' // 90 days
   }
+}
+
+function resolveUniqueChartPaths(chartPaths, configBasePath) {
+  const paths = _.map(chartPaths, chartPath => path.resolve(configBasePath, chartPath))
+  return _.uniq(paths)
 }
 
 function sanitizeProvider(provider) {

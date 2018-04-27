@@ -1,5 +1,6 @@
 'use strict'
 const fs = require('fs')
+const _ = require('lodash')
 const path = require('path')
 const http = require('http')
 const chai = require('chai')
@@ -24,18 +25,40 @@ describe('GET /resources/charts', () => {
   )
   afterEach(done => testServer.close(() => done()))
 
-  it('returns all charts', () => {
+  it('returns all charts for default path', () => {
     return plugin.start({})
       .then(() => get(testServer, '/signalk/v1/api/resources/charts'))
       .then(result => {
         expect(result.status).to.equal(200)
         const resultCharts = result.body
+        expect(_.keys(resultCharts).length).to.deep.equal(3)
         expect(resultCharts).to.deep.equal(expectedCharts)
       })
   })
 
+  it('handle canonical paths', () => {
+    return plugin.start({chartPaths: ['charts', path.resolve(__dirname, 'charts').toString()]})
+      .then(() => get(testServer, '/signalk/v1/api/resources/charts'))
+      .then(result => {
+        expect(result.status).to.equal(200)
+        const resultCharts = result.body
+        expect(_.keys(resultCharts).length).to.deep.equal(3)
+      })
+  })
+
+  it('returns all charts for multiple paths', () => {
+    return plugin.start({chartPaths: ['charts', 'charts-2']})
+      .then(() => get(testServer, '/signalk/v1/api/resources/charts'))
+      .then(result => {
+        expect(result.status).to.equal(200)
+        const resultCharts = result.body
+        expect(_.keys(resultCharts).length).to.deep.equal(4)
+        expect(resultCharts['test2']).not.to.equal(undefined)
+      })
+  })
+
   it('returns empty charts for custom path', () => {
-    return plugin.start({chartsPath: '../src/'})
+    return plugin.start({chartPaths: ['../src/']})
       .then(() => get(testServer, '/signalk/v1/api/resources/charts'))
       .then(result => {
         expect(result.status).to.equal(200)
