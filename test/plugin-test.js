@@ -66,6 +66,26 @@ describe('GET /resources/charts', () => {
       })
   })
 
+  it('returns online chart providers', () => {
+    return plugin.start({chartPaths: ['charts'], onlineChartProviders: [
+        {name: 'Test Name', minzoom: 2, maxzoom: 15, format: 'jpg', url: 'https://example.com'}
+      ]})
+      .then(() => get(testServer, '/signalk/v1/api/resources/charts'))
+      .then(result => {
+        expect(result.body['test-name']).to.deep.equal({
+          bounds: [-180, -90, 180, 90],
+          format: 'jpg',
+          identifier: 'test-name',
+          maxzoom: 15,
+          minzoom: 2,
+          name: 'Test Name',
+          scale: 'N/A',
+          tilemapUrl: 'https://example.com',
+          type: 'tilelayer'
+        })
+      })
+  })
+
   it('returns one chart', () => {
     const identifier = 'test'
     return plugin.start({})
