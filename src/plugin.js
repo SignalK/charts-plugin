@@ -6,6 +6,9 @@ const fs = require('fs')
 const Charts = require('./charts')
 const {apiRoutePrefix} = require('./constants')
 
+const MIN_ZOOM = 1
+const MAX_ZOOM = 19
+
 module.exports = function(app) {
   let chartProviders = []
   let pluginStarted = false
@@ -17,13 +20,18 @@ module.exports = function(app) {
     const chartPaths = _.isEmpty(props.chartPaths)
       ? [defaultChartsPath]
       : resolveUniqueChartPaths(props.chartPaths, configBasePath)
-    debug(`Start plugin, chart paths: ${chartPaths.join(', ')}`)
+    const onlineProviders = _.reduce(props.onlineChartProviders, (result, data) => {
+      const provider = convertOnlineProviderConfig(data)
+      result[provider.identifier] = provider
+      return result
+    }, {})
+    debug(`Start charts plugin. Chart paths: ${chartPaths.join(', ')}, online charts: ${onlineProviders.length}`)
 
     const loadProviders = Promise.mapSeries(chartPaths, chartPath => Charts.findCharts(chartPath))
       .then(list => _.reduce(list, (result, charts) => _.merge({}, result, charts), {}))
     return loadProviders.then(charts => {
       console.log(`Chart plugin: Found ${_.keys(charts).length} charts from ${chartPaths.join(', ')}`)
-      chartProviders = charts
+      chartProviders = _.merge({}, charts, onlineProviders)
       // Do not register routes if plugin has been started once already
       pluginStarted === false && registerRoutes()
       pluginStarted = true
@@ -89,6 +97,50 @@ module.exports = function(app) {
             title: "Path",
             description: `Path for chart files, relative to "${configBasePath}"`
           }
+        },
+        onlineChartProviders: {
+          type: 'array',
+          title: 'Online chart providers',
+          items: {
+            type: 'object',
+            title: 'Provider',
+            required: ['name', 'minzoom', 'maxzoom', 'format', 'url'],
+            properties: {
+              name: {
+                type: 'string',
+                title: 'Name'
+              },
+              description: {
+                type: 'string',
+                title: 'Description'
+              },
+              minzoom: {
+                type: 'number',
+                title: `Minimum zoom level, between [${MIN_ZOOM}, ${MAX_ZOOM}]`,
+                maximum: MAX_ZOOM,
+                minimum: MIN_ZOOM,
+                default: MIN_ZOOM,
+              },
+              maxzoom: {
+                type: 'number',
+                title: `Maximum zoom level, between [${MIN_ZOOM}, ${MAX_ZOOM}]`,
+                maximum: MAX_ZOOM,
+                minimum: MIN_ZOOM,
+                default: 15,
+              },
+              format: {
+                type: 'string',
+                title: 'Format',
+                default: 'png',
+                enum: ['png', 'jpg']
+              },
+              url: {
+                type: 'string',
+                title: 'URL',
+                description: 'Tileset URL containing {z}, {x} and {y} parameters, for example "http://example.org/{z}/{x}/{y}.png"'
+              }
+            }
+          }
         }
       }
     },
@@ -107,6 +159,22 @@ const responseHttpOptions = {
 function resolveUniqueChartPaths(chartPaths, configBasePath) {
   const paths = _.map(chartPaths, chartPath => path.resolve(configBasePath, chartPath))
   return _.uniq(paths)
+}
+
+function convertOnlineProviderConfig(provider) {
+  const id = _.kebabCase(_.deburr(provider.name))
+  return {
+    name: provider.name,
+    description: provider.description,
+    bounds: [-180, -90, 180, 90],
+    minzoom: Math.min(Math.max(1, provider.minzoom), 19),
+    maxzoom: Math.min(Math.max(1, provider.maxzoom), 19),
+    format: provider.format,
+    type: 'tilelayer',
+    scale: 'N/A',
+    identifier: id,
+    tilemapUrl: provider.url
+  }
 }
 
 function sanitizeProvider(provider) {

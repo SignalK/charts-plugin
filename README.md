@@ -6,15 +6,19 @@ Signal K Node server plugin to provide chart metadata, such as name, description
 
 1. Install "Signal K Charts" plugin from Signal K Appstore
 
-2. Add "Chart paths" in plugin configuration. Defaults to `${signalk-configuration-path}/charts`
+1. Add "Chart paths" in plugin configuration. Defaults to `${signalk-configuration-path}/charts`
 
-![Configuration options](https://user-images.githubusercontent.com/1435910/39382493-57c1e4dc-4a6e-11e8-93e1-cedb4c7662f4.png)
+<img src="https://user-images.githubusercontent.com/1435910/39382493-57c1e4dc-4a6e-11e8-93e1-cedb4c7662f4.png" alt="Chart paths configuration" width="450"/>
 
-3. Put charts into selected paths
+1. Put charts into selected paths
 
-4. Activate plugin
+1. Add optional online chart providers
 
-5. Use one of the client apps supporting Signal K charts, for example:
+<img src="https://user-images.githubusercontent.com/1435910/45048136-c65d2e80-b083-11e8-99db-01e8cece9f89.png" alt="Online chart providers configuration" width="450"/>
+
+1. Activate plugin
+
+1. Use one of the client apps supporting Signal K charts, for example:
 - [Freeboard SK](https://www.npmjs.com/package/@signalk/freeboard-sk)
 - [Tuktuk Chart Plotter](https://www.npmjs.com/package/tuktuk-chart-plotter)
 
@@ -23,6 +27,7 @@ Signal K Node server plugin to provide chart metadata, such as name, description
 - [MBTiles](https://github.com/mapbox/mbtiles-spec) file
 - Directory with cached [TMS](https://wiki.osgeo.org/wiki/Tile_Map_Service_Specification) tiles and `tilemapresource.xml`
 - Directory with XYZ tiles and `metadata.json`
+- Online [TMS](https://wiki.osgeo.org/wiki/Tile_Map_Service_Specification)
 
 Publicly available MBTiles charts can be found from:
 - [NOAA Nautical charts](http://tileservice.charts.noaa.gov/), quick download [cheat-sheet](https://github.com/vokkim/noaa-nautical-charts)
