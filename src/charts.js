@@ -29,6 +29,9 @@ function findCharts(chartBaseDir) {
       result[chart.identifier] = chart
       return result
     }, {}))
+    .catch(err => {
+      console.error(`Error reading charts directory ${chartBaseDir}:${err.message}`)
+    })
 }
 
 function openMbtilesFile(file, filename) {
