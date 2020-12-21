@@ -16,6 +16,9 @@ Signal K Node server plugin to provide chart metadata, such as name, description
 
 <img src="https://user-images.githubusercontent.com/1435910/45048136-c65d2e80-b083-11e8-99db-01e8cece9f89.png" alt="Online chart providers configuration" width="450"/>
 
+_WMS example:_
+![image](https://user-images.githubusercontent.com/38519157/102832518-90077100-443e-11eb-9a1d-d0806bb2b10b.png)
+
 5. Activate plugin
 
 6. Use one of the client apps supporting Signal K charts, for example:
