@@ -143,14 +143,15 @@ module.exports = function(app) {
               url: {
                 type: 'string',
                 title: 'URL',
-                description: 'Tileset URL containing {z}, {x} and {y} parameters, for example "http://example.org/{z}/{x}/{y}.png"'
+                description: 'Map URL (for tilelayer include {z}, {x} and {y} parameters, e.g. "http://example.org/{z}/{x}/{y}.png")'
               },
               layers: {
                 type: 'array',
                 title: 'Layers',
+                description: '(WMS only) ',
                 items: {
                     title: 'Layer Name',
-                    description: '(WMS maps only) Name of layer to fetch and display',
+                    description: 'Name of layer to display',
                     type: 'string'
                 }
               }
