@@ -128,6 +128,12 @@ module.exports = function(app) {
                 minimum: MIN_ZOOM,
                 default: 15,
               },
+              serverType: {
+                type: 'string',
+                title: 'Server Type',
+                default: 'tilelayer',
+                enum: ['tilelayer', 'WMS']
+              },
               format: {
                 type: 'string',
                 title: 'Format',
@@ -137,7 +143,17 @@ module.exports = function(app) {
               url: {
                 type: 'string',
                 title: 'URL',
-                description: 'Tileset URL containing {z}, {x} and {y} parameters, for example "http://example.org/{z}/{x}/{y}.png"'
+                description: 'Map URL (for tilelayer include {z}, {x} and {y} parameters, e.g. "http://example.org/{z}/{x}/{y}.png")'
+              },
+              layers: {
+                type: 'array',
+                title: 'Layers',
+                description: '(WMS only) ',
+                items: {
+                    title: 'Layer Name',
+                    description: 'Name of layer to display',
+                    type: 'string'
+                }
               }
             }
           }
@@ -170,10 +186,11 @@ function convertOnlineProviderConfig(provider) {
     minzoom: Math.min(Math.max(1, provider.minzoom), 19),
     maxzoom: Math.min(Math.max(1, provider.maxzoom), 19),
     format: provider.format,
-    type: 'tilelayer',
     scale: 'N/A',
     identifier: id,
-    tilemapUrl: provider.url
+    tilemapUrl: provider.url,
+    type: (provider.serverType) ? provider.serverType : 'tilelayer',
+    chartLayers: (provider.layers) ? provider.layers : null
   }
 }
 
