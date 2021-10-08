@@ -5,6 +5,7 @@ const path = require('path')
 const fs = require('fs')
 const Charts = require('./charts')
 const {apiRoutePrefix} = require('./constants')
+const openApi = require('./openApi')
 
 const MIN_ZOOM = 1
 const MAX_ZOOM = 19
@@ -161,7 +162,8 @@ module.exports = function(app) {
       }
     },
     start,
-    stop
+    stop,
+    openApiPaths: () => openApi.paths
   }
 }
 
