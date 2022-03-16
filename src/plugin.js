@@ -41,7 +41,7 @@ module.exports = function(app) {
     }, {})
     debug(`Start charts plugin. Chart paths: ${chartPaths.join(', ')}, online charts: ${onlineProviders.length}`)
 
-    const loadProviders = Promise.mapSeries(chartPaths, chartPath => Charts.findCharts(chartPath))
+    const loadProviders = Promise.mapSeries(chartPaths, chartPath => Charts.findCharts(chartPath, apiPath))
       .then(list => _.reduce(list, (result, charts) => _.merge({}, result, charts), {}))
     return loadProviders.then(charts => {
       console.log(`Chart plugin: Found ${_.keys(charts).length} charts from ${chartPaths.join(', ')}`)
@@ -257,6 +257,7 @@ function convertOnlineProviderConfig(provider) {
 }
 
 function sanitizeProvider(provider) {
+  console.log('** provider: ', JSON.stringify(provider))
   return _.omit(provider, ['_filePath', '_fileFormat', '_mbtilesHandle', '_flipY'])
 }
 

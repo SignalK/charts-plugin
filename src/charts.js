@@ -7,7 +7,10 @@ const fs = Promise.promisifyAll(require('fs'))
 const _ = require('lodash')
 const {apiRoutePrefix} = require('./constants')
 
-function findCharts(chartBaseDir) {
+let tilePathPrefix = apiRoutePrefix[1]
+
+function findCharts(chartBaseDir, apiPath) {
+  tilePathPrefix = apiPath ? apiPath : apiRoutePrefix[1]
   return fs
     .readdirAsync(chartBaseDir)
     .then(files => {
@@ -65,7 +68,7 @@ function openMbtilesFile(file, filename) {
       maxzoom: metadata.maxzoom,
       format: metadata.format,
       type: 'tilelayer',
-      tilemapUrl: `${apiRoutePrefix}/charts/${identifier}/{z}/{x}/{y}`,
+      tilemapUrl: `${tilePathPrefix}/charts/${identifier}/{z}/{x}/{y}`,
       scale: metadata.scale || '250000'
     }
   }).catch(e => {
@@ -154,7 +157,7 @@ function directoryToMapInfo(file, identifier) {
           identifier,
           _fileFormat: 'directory',
           _filePath: file,
-          tilemapUrl: `${apiRoutePrefix}/charts/${identifier}/{z}/{x}/{y}`,
+          tilemapUrl: `${tilePathPrefix}/charts/${identifier}/{z}/{x}/{y}`,
         })
       }
       return null
