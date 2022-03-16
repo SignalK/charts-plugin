@@ -10,8 +10,10 @@ const MAX_ZOOM = 24
 
 module.exports = function(app) {
   let apiPath = apiRoutePrefix[1]
+  let apiPath = apiRoutePrefix[1]
   let chartProviders = []
   let pluginStarted = false
+  let props = {}
   let props = {}
   const configBasePath = app.config.configPath
   const defaultChartsPath = path.join(configBasePath, "/charts")
