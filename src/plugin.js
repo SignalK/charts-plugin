@@ -275,6 +275,7 @@ function convertOnlineProviderConfig(provider, version = 1) {
 }
 
 function sanitizeProvider(provider) {
+  console.log('** provider: ', JSON.stringify(provider))
   return _.omit(provider, ['_filePath', '_fileFormat', '_mbtilesHandle', '_flipY'])
 }
 
