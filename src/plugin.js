@@ -10,16 +10,30 @@ const MIN_ZOOM = 1
 const MAX_ZOOM = 19
 
 module.exports = function(app) {
+  let apiPath = apiRoutePrefix[1]
   let chartProviders = []
   let pluginStarted = false
+  let props = {}
   const configBasePath = app.config.configPath
   const defaultChartsPath = path.join(configBasePath, "/charts")
   ensureDirectoryExists(defaultChartsPath)
 
-  function start(props) {
+  function start(config) {
+    app.debug('** loaded config: ', config)
+    if (typeof config.api === 'undefined') {
+      config.api = 1
+    } 
+    props = {...config}
+    apiPath = typeof apiRoutePrefix[props.api] !== 'undefined' 
+      ? apiRoutePrefix[props.api]
+      : apiPath
+    app.debug('** props:', props)
+    app.debug('** apiPath:', apiPath)
+
     const chartPaths = _.isEmpty(props.chartPaths)
       ? [defaultChartsPath]
       : resolveUniqueChartPaths(props.chartPaths, configBasePath)
+
     const onlineProviders = _.reduce(props.onlineChartProviders, (result, data) => {
       const provider = convertOnlineProviderConfig(data)
       result[provider.identifier] = provider
@@ -46,7 +60,8 @@ module.exports = function(app) {
   }
 
   function registerRoutes() {
-    app.get(apiRoutePrefix + '/charts/:identifier/:z([0-9]*)/:x([0-9]*)/:y([0-9]*)', (req, res) => {
+
+    app.get(apiPath + '/charts/:identifier/:z([0-9]*)/:x([0-9]*)/:y([0-9]*)', (req, res) => {
       const { identifier, z, x, y } = req.params
       const provider = chartProviders[identifier]
       if (!provider) {
@@ -64,20 +79,59 @@ module.exports = function(app) {
       }
     })
 
-    app.get(apiRoutePrefix + "/charts/:identifier", (req, res) => {
-      const { identifier } = req.params
-      const provider = chartProviders[identifier]
-      if (provider) {
-        return res.json(sanitizeProvider(provider))
-      } else {
-        return res.status(404).send('Not found')
-      }
-    })
+    if (typeof props.api === 'undefined' || props.api === 1) {
+      app.get(apiPath + "/charts/:identifier", (req, res) => {
+        const { identifier } = req.params
+        const provider = chartProviders[identifier]
+        if (provider) {
+          return res.json(sanitizeProvider(provider))
+        } else {
+          return res.status(404).send('Not found')
+        }
+      })
 
-    app.get(apiRoutePrefix + "/charts", (req, res) => {
-      const sanitized = _.mapValues(chartProviders, sanitizeProvider)
-      res.json(sanitized)
-    })
+      app.get(apiPath + "/charts", (req, res) => {
+        const sanitized = _.mapValues(chartProviders, sanitizeProvider)
+        res.json(sanitized)
+      })
+    } else {
+      registerAsProvider()
+    }
+
+  }
+
+  function registerAsProvider() {
+    app.debug('** Registering as Resource Provider for `charts` **')
+    try {
+      app.registerResourceProvider({
+        type: "charts",
+        methods: {
+          listResources: (params) => {
+            app.debug(`** listResources()`, params)
+            return Promise.resolve(
+               _.mapValues(chartProviders, sanitizeProvider)
+            )
+          },
+          getResource: (id) => {
+            app.debug(`** getResource()`, id)
+            const provider = chartProviders[id]
+            if (provider) {
+              return Promise.resolve(sanitizeProvider(provider))
+            } else {
+              throw new Error('Chart not found!')
+            }
+          },
+          setResource: (id, value) => {
+            throw new Error('Not implemented!')
+          },
+          deleteResource: (id) => {
+            throw new Error('Not implemented!')
+          }
+        }
+      })
+    } catch (error) {
+      debug('Failed Provider Registration!')
+    }
   }
 
   return {
@@ -89,6 +143,14 @@ module.exports = function(app) {
       description: `Add one or more paths to find charts. Defaults to "${defaultChartsPath}"`,
       type: 'object',
       properties: {
+        api: {
+          type: 'number',
+          title: 'Signal K API version (*restart required)',
+          description: 'Determines path of "./resources/charts"',
+          default: 1,
+          minimum: 1,
+          maximum: 2
+        },
         chartPaths: {
           type: 'array',
           title: 'Chart paths',
