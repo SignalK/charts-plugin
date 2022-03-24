@@ -43,7 +43,7 @@ Plugin adds support for `/resources/charts` endpoints described in [Signal K spe
 
 - `GET /signalk/v1/api/resources/charts/` returns metadata for all available charts
 - `GET /signalk/v1/api/resources/charts/${identifier}/` returns metadata for selected chart
-- `GET /signalk/v1/api/resources/charts/${identifier}/${z}/${x}/${y}` returns a single tile for selected chart
+- `GET /signalk/v1/api/resources/charts/${identifier}/${z}/${x}/${y}` returns a single tile for selected offline chart. As charts-plugin isn't proxy, online charts is not available via this request. You should look the metadata to find proper request.
 
 License
 -------
