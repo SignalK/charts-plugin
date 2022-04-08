@@ -258,24 +258,25 @@ function convertOnlineProviderConfig(provider, version = 1) {
     minzoom: Math.min(Math.max(1, provider.minzoom), 19),
     maxzoom: Math.min(Math.max(1, provider.maxzoom), 19),
     format: provider.format,
-    type: (provider.serverType) ? provider.serverType : 'tilelayer',
+    identifier: id,
     scale: 250000
   }
-  if (version === 1) {
+  if (version ===1) {
     return _.merge(data, {
       tilemapUrl: provider.url,
+      type: (provider.serverType) ? provider.serverType : 'tilelayer',
       chartLayers: (provider.layers) ? provider.layers : null
     })
   } else {
     return _.merge(data, {
-      url: provider.url,
+      tiles: [provider.url],
+      sourceType: (provider.serverType) ? provider.serverType : 'tilelayer',
       layers: (provider.layers) ? provider.layers : null
     })
   }
 }
 
 function sanitizeProvider(provider) {
-  console.log('** provider: ', JSON.stringify(provider))
   return _.omit(provider, ['_filePath', '_fileFormat', '_mbtilesHandle', '_flipY'])
 }
 
