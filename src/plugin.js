@@ -35,13 +35,13 @@ module.exports = function(app) {
       : resolveUniqueChartPaths(props.chartPaths, configBasePath)
 
     const onlineProviders = _.reduce(props.onlineChartProviders, (result, data) => {
-      const provider = convertOnlineProviderConfig(data)
+      const provider = convertOnlineProviderConfig(data, props.api)
       result[provider.identifier] = provider
       return result
     }, {})
     debug(`Start charts plugin. Chart paths: ${chartPaths.join(', ')}, online charts: ${onlineProviders.length}`)
 
-    const loadProviders = Promise.mapSeries(chartPaths, chartPath => Charts.findCharts(chartPath, apiPath))
+    const loadProviders = Promise.mapSeries(chartPaths, chartPath => Charts.findCharts(chartPath, apiPath, props.api))
       .then(list => _.reduce(list, (result, charts) => _.merge({}, result, charts), {}))
     return loadProviders.then(charts => {
       console.log(`Chart plugin: Found ${_.keys(charts).length} charts from ${chartPaths.join(', ')}`)
@@ -239,25 +239,34 @@ function resolveUniqueChartPaths(chartPaths, configBasePath) {
   return _.uniq(paths)
 }
 
-function convertOnlineProviderConfig(provider) {
+function convertOnlineProviderConfig(provider, version = 1) {
   const id = _.kebabCase(_.deburr(provider.name))
-  return {
+  const data = {
     name: provider.name,
     description: provider.description,
     bounds: [-180, -90, 180, 90],
     minzoom: Math.min(Math.max(1, provider.minzoom), 19),
     maxzoom: Math.min(Math.max(1, provider.maxzoom), 19),
     format: provider.format,
-    scale: 'N/A',
     identifier: id,
-    tilemapUrl: provider.url,
-    type: (provider.serverType) ? provider.serverType : 'tilelayer',
-    chartLayers: (provider.layers) ? provider.layers : null
+    scale: 250000
+  }
+  if (version ===1) {
+    return _.merge(data, {
+      tilemapUrl: provider.url,
+      type: (provider.serverType) ? provider.serverType : 'tilelayer',
+      chartLayers: (provider.layers) ? provider.layers : null
+    })
+  } else {
+    return _.merge(data, {
+      tiles: [provider.url],
+      sourceType: (provider.serverType) ? provider.serverType : 'tilelayer',
+      layers: (provider.layers) ? provider.layers : null
+    })
   }
 }
 
 function sanitizeProvider(provider) {
-  console.log('** provider: ', JSON.stringify(provider))
   return _.omit(provider, ['_filePath', '_fileFormat', '_mbtilesHandle', '_flipY'])
 }
 
