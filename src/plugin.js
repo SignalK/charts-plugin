@@ -21,13 +21,18 @@ module.exports = function(app) {
   function start(config) {
     app.debug('** loaded config: ', config)
     if (typeof config.api === 'undefined') {
-      config.api = 1
-    } 
+      config.api = 0
+    }
+    // use server major version to set apiVersion used when auto is selected.
+    const serverMajorVersion = app.config.version.split('.')[0]
+    if ( config.api === 0) {
+      config.api = serverMajorVersion
+    }
     props = {...config}
     apiPath = typeof apiRoutePrefix[props.api] !== 'undefined' 
       ? apiRoutePrefix[props.api]
       : apiPath
-    app.debug('** props:', props)
+    app.debug('** applied config:', props)
     app.debug('** apiPath:', apiPath)
 
     const chartPaths = _.isEmpty(props.chartPaths)
@@ -140,20 +145,21 @@ module.exports = function(app) {
     description: 'Singal K Charts resource',
     schema: {
       title: 'Signal K Charts',
-      description: `Add one or more paths to find charts. Defaults to "${defaultChartsPath}"`,
+     
       type: 'object',
       properties: {
         api: {
           type: 'number',
-          title: 'Signal K API version (*restart required)',
-          description: 'Determines path of "./resources/charts"',
-          default: 1,
-          minimum: 1,
+          title: 'Signal K API version to use (*server restart required)',
+          description: '0 = Auto (determined by server version). Defines path to "/signalk/v{}/api/resources/charts"',
+          default: 0,
+          minimum: 0,
           maximum: 2
         },
         chartPaths: {
           type: 'array',
           title: 'Chart paths',
+          description: `Add one or more paths to find charts. Defaults to "${defaultChartsPath}"`,
           items: {
             type: 'string',
             title: "Path",
@@ -251,7 +257,7 @@ function convertOnlineProviderConfig(provider, version = 1) {
     identifier: id,
     scale: 250000
   }
-  if (version ===1) {
+  if (version === 1) {
     return _.merge(data, {
       tilemapUrl: provider.url,
       type: (provider.serverType) ? provider.serverType : 'tilelayer',
