@@ -7,7 +7,7 @@ const Charts = require('./charts')
 const {apiRoutePrefix} = require('./constants')
 
 const MIN_ZOOM = 1
-const MAX_ZOOM = 19
+const MAX_ZOOM = 24
 
 module.exports = function(app) {
   let apiPath = apiRoutePrefix[1]
@@ -198,15 +198,17 @@ module.exports = function(app) {
               },
               serverType: {
                 type: 'string',
-                title: 'Server Type',
+                title: 'Map source / server type',
                 default: 'tilelayer',
-                enum: ['tilelayer', 'WMS']
+                enum: ['tilelayer', 'tileJSON', 'WMS', 'WMTS'],
+                description: 'Map data source type served by the supplied url. (Use tilelayer for xyz / tms tile sources.)'
               },
               format: {
                 type: 'string',
                 title: 'Format',
                 default: 'png',
-                enum: ['png', 'jpg']
+                enum: ['png', 'jpg', 'pbf'],
+                description: 'Format of map tiles: raster (png, jpg, etc.) / vector (pbf).'
               },
               url: {
                 type: 'string',
@@ -216,7 +218,7 @@ module.exports = function(app) {
               layers: {
                 type: 'array',
                 title: 'Layers',
-                description: '(WMS only) ',
+                description: 'List of map layer ids to display. (Use with WMS / WMTS types.)',
                 items: {
                     title: 'Layer Name',
                     description: 'Name of layer to display',
@@ -248,25 +250,24 @@ function resolveUniqueChartPaths(chartPaths, configBasePath) {
 function convertOnlineProviderConfig(provider, version = 1) {
   const id = _.kebabCase(_.deburr(provider.name))
   const data = {
+    identifier: id,
     name: provider.name,
     description: provider.description,
     bounds: [-180, -90, 180, 90],
     minzoom: Math.min(Math.max(1, provider.minzoom), 19),
     maxzoom: Math.min(Math.max(1, provider.maxzoom), 19),
     format: provider.format,
-    identifier: id,
+    type: (provider.serverType) ? provider.serverType : 'tilelayer',
     scale: 250000
   }
   if (version === 1) {
     return _.merge(data, {
       tilemapUrl: provider.url,
-      type: (provider.serverType) ? provider.serverType : 'tilelayer',
       chartLayers: (provider.layers) ? provider.layers : null
     })
   } else {
     return _.merge(data, {
-      tiles: [provider.url],
-      sourceType: (provider.serverType) ? provider.serverType : 'tilelayer',
+      url: provider.url,
       layers: (provider.layers) ? provider.layers : null
     })
   }

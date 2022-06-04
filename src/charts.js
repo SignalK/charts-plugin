@@ -56,76 +56,25 @@ function openMbtilesFileV2(file, filename) {
       return null
     }
     const identifier = filename.replace(/\.mbtiles$/i, '')
-    return _.merge(
-      {identifier},
-      metadata,
-      {
-        tiles: [`${tilePathPrefix}/charts/${identifier}/{z}/{x}/{y}`],
-        scale: parseInt(metadata.scale) || 250000,
-        sourceType: 'tilelayer'
-      },
-      {
-        _fileFormat: 'mbtiles',
-        _mbtilesHandle: mbtiles,
-        _flipY: false
-      }
-    )
+    return {
+      _fileFormat: 'mbtiles',
+      _mbtilesHandle: mbtiles,
+      _flipY: false,
+      identifier,
+      name: metadata.name || metadata.id,
+      description: metadata.description,
+      bounds: metadata.bounds,
+      minzoom: metadata.minzoom,
+      maxzoom: metadata.maxzoom,
+      format: metadata.format,
+      type: 'tilelayer',
+      url: `${tilePathPrefix}/charts/${identifier}/{z}/{x}/{y}`,
+      scale: parseInt(metadata.scale) || 250000
+    }
   }).catch(e => {
     console.error(`Error loading chart ${file}`, e.message)
     return null
   })
-}
-
-function parseTilemapResourceV2(tilemapResource) {
-  return fs
-   .readFileAsync(tilemapResource)
-   .then(Promise.promisify(xml2js.parseString))
-   .then(parsed => {
-     const result = parsed.TileMap
-     const name = _.get(result, 'Title.0')
-     const format = _.get(result, 'TileFormat.0.$.extension')
-     const scale = _.get(result, 'Metadata.0.$.scale')
-     const bbox = _.get(result, 'BoundingBox.0.$')
-     const zoomLevels = _.map(_.get(result, 'TileSets.0.TileSet')||[], set => parseInt(_.get(set, '$.href')))
-     return {
-       _flipY: true,
-       name,
-       description: name,
-       bounds: bbox ? [parseFloat(bbox.minx), parseFloat(bbox.miny), parseFloat(bbox.maxx), parseFloat(bbox.maxy)] : undefined,
-       minzoom: !_.isEmpty(zoomLevels) ? _.min(zoomLevels) : undefined,
-       maxzoom: !_.isEmpty(zoomLevels) ? _.max(zoomLevels) : undefined,
-       format,
-       sourceType: 'tilelayer',
-       scale: parseInt(scale) || 250000
-     }
-   })
-}
-function parseMetadataJsonV2(metadataJson) {
-  return fs
-   .readFileAsync(metadataJson)
-   .then(JSON.parse)
-   .then(metadata => {
-     function parseBounds(bounds) {
-       if (_.isString(bounds)) {
-         return _.map(bounds.split(','), bound => parseFloat(_.trim(bound)))
-       } else if (_.isArray(bounds) && bounds.length === 4) {
-         return bounds
-       } else {
-         return undefined
-       }
-     }
-     return {
-       _flipY: false,
-       name: metadata.name || metadata.id,
-       description: metadata.description,
-       bounds: parseBounds(metadata.bounds),
-       minzoom: parseIntIfNotUndefined(metadata.minzoom),
-       maxzoom: parseIntIfNotUndefined(metadata.maxzoom),
-       format: metadata.format,
-       sourceType: 'tilelayer',
-       scale: metadata.scale || 250000
-     }
-   })
 }
 
 function directoryToMapInfoV2(file, identifier) {
@@ -136,9 +85,9 @@ function directoryToMapInfoV2(file, identifier) {
     const hasTilemapResource = fs.existsSync(tilemapResource)
     const hasMetadataJson = fs.existsSync(metadataJson)
     if (hasTilemapResource) {
-      return parseTilemapResourceV2(tilemapResource)
+      return parseTilemapResource(tilemapResource)
     } else if (hasMetadataJson) {
-      return parseMetadataJsonV2(metadataJson)
+      return parseMetadataJson(metadataJson)
     } else {
       return Promise.resolve(null)
     }
@@ -153,9 +102,9 @@ function directoryToMapInfoV2(file, identifier) {
         }
         return _.merge(info, {
           identifier,
-          tiles: [`${tilePathPrefix}/charts/${identifier}/{z}/{x}/{y}`],
           _fileFormat: 'directory',
-          _filePath: file
+          _filePath: file,
+          url: `${tilePathPrefix}/charts/${identifier}/{z}/{x}/{y}`,
         })
       }
       return null
@@ -198,7 +147,7 @@ function openMbtilesFile(file, filename) {
       format: metadata.format,
       type: 'tilelayer',
       tilemapUrl: `${tilePathPrefix}/charts/${identifier}/{z}/{x}/{y}`,
-      scale: metadata.scale || '250000'
+      scale: parseInt(metadata.scale) || 250000
     }
   }).catch(e => {
     console.error(`Error loading chart ${file}`, e.message)
@@ -254,7 +203,7 @@ function parseMetadataJson(metadataJson) {
         maxzoom: parseIntIfNotUndefined(metadata.maxzoom),
         format: metadata.format,
         type: 'tilelayer',
-        scale: metadata.scale || 250000
+        scale: parseInt(metadata.scale) || 250000
       }
     })
 }
