@@ -19,9 +19,9 @@ function findCharts(chartBaseDir, apiPath, version = 1) {
         const file = path.resolve(chartBaseDir, filename)
         const isDirectory = fs.statSync(file).isDirectory()
         if (isMbtilesFile) {
-          return version !== 1 ? openMbtilesFileV2(file, filename) : openMbtilesFile(file, filename)
+          return openMbtilesFile(file, filename, version)
         } else if (isDirectory) {
-          return  version !== 1 ? directoryToMapInfoV2(file, filename) : directoryToMapInfo(file, filename)
+          return directoryToMapInfo(file, filename, version)
         } else {
           return Promise.resolve(null)
         }
@@ -37,7 +37,7 @@ function findCharts(chartBaseDir, apiPath, version = 1) {
     })
 }
 
-function openMbtilesFileV2(file, filename) {
+function openMbtilesFile(file, filename, version) {
   return new Promise((resolve, reject) => {
     new MBTiles(file, (err, mbtiles) => {
       if (err) {
@@ -56,7 +56,7 @@ function openMbtilesFileV2(file, filename) {
       return null
     }
     const identifier = filename.replace(/\.mbtiles$/i, '')
-    return {
+    let data = {
       _fileFormat: 'mbtiles',
       _mbtilesHandle: mbtiles,
       _flipY: false,
@@ -68,86 +68,16 @@ function openMbtilesFileV2(file, filename) {
       maxzoom: metadata.maxzoom,
       format: metadata.format,
       type: 'tilelayer',
-      url: `${tilePathPrefix}/charts/${identifier}/{z}/{x}/{y}`,
       scale: parseInt(metadata.scale) || 250000
     }
-  }).catch(e => {
-    console.error(`Error loading chart ${file}`, e.message)
-    return null
-  })
-}
-
-function directoryToMapInfoV2(file, identifier) {
-  function loadInfo() {
-    const tilemapResource = path.join(file, 'tilemapresource.xml')
-    const metadataJson = path.join(file, 'metadata.json')
-
-    const hasTilemapResource = fs.existsSync(tilemapResource)
-    const hasMetadataJson = fs.existsSync(metadataJson)
-    if (hasTilemapResource) {
-      return parseTilemapResource(tilemapResource)
-    } else if (hasMetadataJson) {
-      return parseMetadataJson(metadataJson)
+    if (version === 1) {
+      return _.merge(data, {
+        tilemapUrl: `${tilePathPrefix}/charts/${identifier}/{z}/{x}/{y}`
+      })
     } else {
-      return Promise.resolve(null)
-    }
-  }
-
-  return loadInfo()
-    .then(info => {
-      if (info) {
-        if (!info.format) {
-          console.error(`Missing format metadata for chart ${identifier}`)
-          return null
-        }
-        return _.merge(info, {
-          identifier,
-          _fileFormat: 'directory',
-          _filePath: file,
-          url: `${tilePathPrefix}/charts/${identifier}/{z}/{x}/{y}`,
-        })
-      }
-      return null
-    })
-    .catch(e => {
-      console.error(`Error getting charts from ${file}`, e.message)
-      return undefined
-    })
-}
-
-function openMbtilesFile(file, filename) {
-  return new Promise((resolve, reject) => {
-    new MBTiles(file, (err, mbtiles) => {
-      if (err) {
-        return reject(err)
-      }
-      mbtiles.getInfo((err, metadata) => {
-        if (err) {
-          return reject(err)
-        }
-
-        return resolve({mbtiles, metadata})
+      return _.merge(data, {
+        url: `${tilePathPrefix}/charts/${identifier}/{z}/{x}/{y}`
       })
-    })
-  }).then(({mbtiles, metadata}) => {
-    if (_.isEmpty(metadata) || metadata.bounds === undefined) {
-      return null
-    }
-    const identifier = filename.replace(/\.mbtiles$/i, '')
-    return {
-      _fileFormat: 'mbtiles',
-      _mbtilesHandle: mbtiles,
-      _flipY: false,
-      identifier,
-      name: metadata.name || metadata.id,
-      description: metadata.description,
-      bounds: metadata.bounds,
-      minzoom: metadata.minzoom,
-      maxzoom: metadata.maxzoom,
-      format: metadata.format,
-      type: 'tilelayer',
-      tilemapUrl: `${tilePathPrefix}/charts/${identifier}/{z}/{x}/{y}`,
-      scale: parseInt(metadata.scale) || 250000
     }
   }).catch(e => {
     console.error(`Error loading chart ${file}`, e.message)
@@ -208,7 +138,7 @@ function parseMetadataJson(metadataJson) {
     })
 }
 
-function directoryToMapInfo(file, identifier) {
+function directoryToMapInfo(file, identifier, version) {
   function loadInfo() {
     const tilemapResource = path.join(file, 'tilemapresource.xml')
     const metadataJson = path.join(file, 'metadata.json')
@@ -231,12 +161,22 @@ function directoryToMapInfo(file, identifier) {
           console.error(`Missing format metadata for chart ${identifier}`)
           return null
         }
-        return _.merge(info, {
-          identifier,
-          _fileFormat: 'directory',
-          _filePath: file,
-          tilemapUrl: `${tilePathPrefix}/charts/${identifier}/{z}/{x}/{y}`,
-        })
+
+        if (version === 1) {
+          return _.merge(info, {
+            identifier,
+            _fileFormat: 'directory',
+            _filePath: file,
+            tilemapUrl: `${tilePathPrefix}/charts/${identifier}/{z}/{x}/{y}`,
+          })
+        } else {
+          return _.merge(info, {
+            identifier,
+            _fileFormat: 'directory',
+            _filePath: file,
+            url: `${tilePathPrefix}/charts/${identifier}/{z}/{x}/{y}`,
+          })
+        }
       }
       return null
     })
