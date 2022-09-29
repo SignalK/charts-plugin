@@ -21,7 +21,7 @@
     "email": "mikko.vesikkala@iki.fi"
   },
   "dependencies": {
-    "@mapbox/mbtiles": "0.10.0",
+    "@mapbox/mbtiles": "^0.12.1",
     "baconjs": "1.0.1",
     "bluebird": "3.5.1",
     "debug": "3.1.0",
