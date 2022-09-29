@@ -44,7 +44,7 @@ module.exports = function(app) {
       result[provider.identifier] = provider
       return result
     }, {})
-    debug(`Start charts plugin. Chart paths: ${chartPaths.join(', ')}, online charts: ${onlineProviders.length}`)
+    console.log(`Start charts plugin. Chart paths: ${chartPaths.join(', ')}, online charts: ${onlineProviders.length}`)
 
     const loadProviders = Promise.mapSeries(chartPaths, chartPath => Charts.findCharts(chartPath, apiPath, props.api))
       .then(list => _.reduce(list, (result, charts) => _.merge({}, result, charts), {}))
