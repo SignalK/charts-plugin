@@ -1,4 +1,3 @@
-const debug = require('debug')('signalk-charts-plugin')
 const Promise = require('bluebird')
 const _ = require('lodash')
 const path = require('path')
@@ -44,12 +43,12 @@ module.exports = function(app) {
       result[provider.identifier] = provider
       return result
     }, {})
-    console.log(`Start charts plugin. Chart paths: ${chartPaths.join(', ')}, online charts: ${onlineProviders.length}`)
+    app.debug(`Start charts plugin. Chart paths: ${chartPaths.join(', ')}, online charts: ${onlineProviders.length}`)
 
     const loadProviders = Promise.mapSeries(chartPaths, chartPath => Charts.findCharts(chartPath, apiPath, props.api))
       .then(list => _.reduce(list, (result, charts) => _.merge({}, result, charts), {}))
     return loadProviders.then(charts => {
-      console.log(`Chart plugin: Found ${_.keys(charts).length} charts from ${chartPaths.join(', ')}`)
+      app.debug(`Chart plugin: Found ${_.keys(charts).length} charts from ${chartPaths.join(', ')}`)
       chartProviders = _.merge({}, charts, onlineProviders)
       // Do not register routes if plugin has been started once already
       pluginStarted === false && registerRoutes()
@@ -61,7 +60,6 @@ module.exports = function(app) {
   }
 
   function stop() {
-    debug("Chart plugin stopped")
   }
 
   function registerRoutes() {
