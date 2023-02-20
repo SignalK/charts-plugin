@@ -54,7 +54,7 @@ _WMS example:_
 - Online [TMS](https://wiki.osgeo.org/wiki/Tile_Map_Service_Specification)
 
 Publicly available MBTiles charts can be found from:
-- [NOAA Nautical charts](http://tileservice.charts.noaa.gov/), quick download [cheat-sheet](https://github.com/vokkim/noaa-nautical-charts)
+- [NOAA Nautical charts](https://distribution.charts.noaa.gov/ncds/index.html)
 - [Finnish Transport Agency nautical charts](https://github.com/vokkim/rannikkokartat-mbtiles)
 - [Signal K World Coastline Map](https://github.com/netAction/signalk-world-coastline-map), download [MBTiles release](https://github.com/netAction/signalk-world-coastline-map/releases/download/v1.0/signalk-world-coastline-map-database.tgz)
 
