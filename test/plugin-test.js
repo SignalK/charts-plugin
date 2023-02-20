@@ -81,7 +81,8 @@ describe('GET /resources/charts', () => {
           name: 'Test Name',
           scale: 'N/A',
           tilemapUrl: 'https://example.com',
-          type: 'tilelayer'
+          type: 'tilelayer',
+          chartLayers: null
         })
       })
   })
