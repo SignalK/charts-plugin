@@ -176,6 +176,7 @@ const expectTileResponse = (response, expectedTilePath, expectedFormat) => {
 const createDefaultApp = () => {
   let app = express()
   app.use(require('body-parser').json())
+  app.debug = (x) => console.log(x)
   app.config = { configPath: path.resolve(__dirname) }
   return new Promise((resolve, reject) => {
     const server = http.createServer(app)
