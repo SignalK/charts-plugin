@@ -85,6 +85,7 @@ module.exports = function(app) {
     })
 
     if (typeof props.api === 'undefined' || props.api === 1) {
+      app.debug('** Registering v1 API paths **')
       app.get(apiPath + "/charts/:identifier", (req, res) => {
         const { identifier } = req.params
         const provider = chartProviders[identifier]
