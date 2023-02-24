@@ -1,4 +1,4 @@
-# Signal K Node server Charts plugin
+# Signal K server Charts plugin
 
 Signal K Node server plugin to provide chart metadata, such as name, description and location of the actual chart tile data.
 
@@ -10,22 +10,24 @@ Signal K Node server plugin to provide chart metadata, such as name, description
 
 - Add "Chart paths" which are the paths to the folders where chart files are stored. Defaults to `${signalk-configuration-path}/charts`
 
-- Set the version of Signal K API to use. _(Default: **0**)_
+- Set the version of Signal K Resources API to use:
 
     0. `(default)` : Signal K server major version is used to determine the API version to use. (_See examples below.)_
 
-    1. `v1` : path = /signalk/`v1`/api/resources/charts`
+        |Server Version | API | Path |
+        |--- |--- |--- |
+        | 1.x.x | v1 | `/signalk/v1/api/resources/charts` |
+        | 2.x.x | v2 | `/signalk/v2/api/resources/charts` |
 
-    2. `v2` : path = /signalk/`v2`/api/resources/charts.
+    1.  | API | Path |
+        |--- |--- |
+        | v1 | `/signalk/v1/api/resources/charts` |
+
+    2. | API | Path |
+        |--- |--- |
+        | v2 | `/signalk/v2/api/resources/charts` |
     
-    The selection you make will be determined by your chart plotter software.
-
-    _Examples: When selection is **0 (auto detect)**:_
-```
-    '1.42.0' => 'v1'
-    `2.0.0` => 'v2'
-```
-
+    _The selection you make will be determined by the Resources API version your chart plotter software supports._
 
 3. Add "Chart paths" in plugin configuration. Defaults to `${signalk-configuration-path}/charts`
 

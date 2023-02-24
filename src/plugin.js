@@ -10,44 +10,48 @@ const MAX_ZOOM = 24
 
 module.exports = function(app) {
   let apiPath = apiRoutePrefix[1]
-  let apiPath = apiRoutePrefix[1]
   let chartProviders = []
   let pluginStarted = false
-  let props = {}
   let props = {}
   const configBasePath = app.config.configPath
   const defaultChartsPath = path.join(configBasePath, "/charts")
   ensureDirectoryExists(defaultChartsPath)
+  let apiVersion = 1;
 
   function start(config) {
     app.debug('** loaded config: ', config)
-    if (typeof config.api === 'undefined') {
-      config.api = 0
-    }
-    // use server major version to set apiVersion used when auto is selected.
-    const serverMajorVersion = app.config.version.split('.')[0]
-    if ( config.api === 0) {
-      config.api = serverMajorVersion
-    }
     props = {...config}
-    apiPath = typeof apiRoutePrefix[props.api] !== 'undefined' 
-      ? apiRoutePrefix[props.api]
-      : apiPath
-    app.debug('** applied config:', props)
-    app.debug('** apiPath:', apiPath)
+
+    // parse server major version and target apiVersion.
+    apiVersion = (typeof config.api === 'undefined') ? 0 : parseInt(config.api)
+    const serverMajorVersion = parseInt(app.config.version.split('.')[0])
+    app.debug('** target apiVersion:', apiVersion)
+    app.debug('** serverMajorVersion:', serverMajorVersion)
+    if (apiVersion === 0 || apiVersion > serverMajorVersion) {
+      apiVersion = serverMajorVersion
+    }
+
+    if (typeof apiRoutePrefix[apiVersion] !== 'undefined') {
+      apiPath = apiRoutePrefix[apiVersion]
+    } else {
+      apiVersion = 1
+    }
+    app.debug('** applied apiVersion:', apiVersion, '** apiPath:', apiPath)
+
+    app.setPluginStatus(`Started: (API version = ${apiVersion})`)
 
     const chartPaths = _.isEmpty(props.chartPaths)
       ? [defaultChartsPath]
       : resolveUniqueChartPaths(props.chartPaths, configBasePath)
 
     const onlineProviders = _.reduce(props.onlineChartProviders, (result, data) => {
-      const provider = convertOnlineProviderConfig(data, props.api)
+      const provider = convertOnlineProviderConfig(data, apiVersion)
       result[provider.identifier] = provider
       return result
     }, {})
-    app.debug(`Start charts plugin. Chart paths: ${chartPaths.join(', ')}, online charts: ${onlineProviders.length}`)
+    app.debug(`Start charts plugin. Chart paths: ${chartPaths.join(', ')}, online charts: ${Object.keys(onlineProviders).length}`)
 
-    const loadProviders = Promise.mapSeries(chartPaths, chartPath => Charts.findCharts(chartPath, apiPath, props.api))
+    const loadProviders = Promise.mapSeries(chartPaths, chartPath => Charts.findCharts(chartPath, apiPath, apiVersion))
       .then(list => _.reduce(list, (result, charts) => _.merge({}, result, charts), {}))
     return loadProviders.then(charts => {
       app.debug(`Chart plugin: Found ${_.keys(charts).length} charts from ${chartPaths.join(', ')}`)
@@ -84,7 +88,7 @@ module.exports = function(app) {
       }
     })
 
-    if (typeof props.api === 'undefined' || props.api === 1) {
+    if (apiVersion === 1) {
       app.debug('** Registering v1 API paths **')
       app.get(apiPath + "/charts/:identifier", (req, res) => {
         const { identifier } = req.params

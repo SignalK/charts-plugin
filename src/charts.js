@@ -10,7 +10,6 @@ const {apiRoutePrefix} = require('./constants')
 let tilePathPrefix = apiRoutePrefix[1]
 
 function findCharts(chartBaseDir, apiPath, version = 1) {
-function findCharts(chartBaseDir, apiPath, version = 1) {
   tilePathPrefix = apiPath ? apiPath : apiRoutePrefix[1]
   return fs
     .readdirAsync(chartBaseDir)
@@ -101,6 +100,7 @@ function parseTilemapResourceV2(tilemapResource) {
      }
    })
 }
+
 function parseMetadataJsonV2(metadataJson) {
   return fs
    .readFileAsync(metadataJson)
