@@ -1,0 +1,18 @@
+{
+  "openapi": "3.0.2",
+  "info": {
+    "title": "Signal K Charts API",
+    "version": "1.0"
+  },
+  "paths": {
+    "/charts": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "A list of available charts"
+          }
+        }
+      }
+    }
+  }
+}
