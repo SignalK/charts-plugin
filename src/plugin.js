@@ -4,61 +4,48 @@ const path = require('path')
 const fs = require('fs')
 const Charts = require('./charts')
 const {apiRoutePrefix} = require('./constants')
+const pmtiles = require('./pmtiles')
 
 const MIN_ZOOM = 1
 const MAX_ZOOM = 24
 
 module.exports = function(app) {
-  let apiPath = apiRoutePrefix[1]
   let chartProviders = []
   let pluginStarted = false
   let props = {}
   const configBasePath = app.config.configPath
   const defaultChartsPath = path.join(configBasePath, "/charts")
+  const serverMajorVersion = parseInt(app.config.version.split('.')[0])
   ensureDirectoryExists(defaultChartsPath)
-  let apiVersion = 1;
 
   function start(config) {
     app.debug('** loaded config: ', config)
     props = {...config}
-
-    // parse server major version and target apiVersion.
-    apiVersion = (typeof config.api === 'undefined') ? 0 : parseInt(config.api)
-    const serverMajorVersion = parseInt(app.config.version.split('.')[0])
-    app.debug('** target apiVersion:', apiVersion)
-    app.debug('** serverMajorVersion:', serverMajorVersion)
-    if (apiVersion === 0 || apiVersion > serverMajorVersion) {
-      apiVersion = serverMajorVersion
-    }
-
-    if (typeof apiRoutePrefix[apiVersion] !== 'undefined') {
-      apiPath = apiRoutePrefix[apiVersion]
-    } else {
-      apiVersion = 1
-    }
-    app.debug('** applied apiVersion:', apiVersion, '** apiPath:', apiPath)
-
-    app.setPluginStatus(`Started: (API version = ${apiVersion})`)
 
     const chartPaths = _.isEmpty(props.chartPaths)
       ? [defaultChartsPath]
       : resolveUniqueChartPaths(props.chartPaths, configBasePath)
 
     const onlineProviders = _.reduce(props.onlineChartProviders, (result, data) => {
-      const provider = convertOnlineProviderConfig(data, apiVersion)
+      const provider = convertOnlineProviderConfig(data)
       result[provider.identifier] = provider
       return result
     }, {})
     app.debug(`Start charts plugin. Chart paths: ${chartPaths.join(', ')}, online charts: ${Object.keys(onlineProviders).length}`)
 
-    const loadProviders = Promise.mapSeries(chartPaths, chartPath => Charts.findCharts(chartPath, apiPath, apiVersion))
-      .then(list => _.reduce(list, (result, charts) => _.merge({}, result, charts), {}))
+    // Do not register routes if plugin has been started once already
+    pluginStarted === false && registerRoutes()
+    pluginStarted = true
+    const hostPort = app.config.getExternalPort() || 3000
+
+    const loadProviders = Promise.mapSeries(chartPaths, chartPath => Charts.findCharts(chartPath, hostPort))
+    .then(list => _.reduce(list, (result, charts) => _.merge({}, result, charts), {}))
+
     return loadProviders.then(charts => {
       app.debug(`Chart plugin: Found ${_.keys(charts).length} charts from ${chartPaths.join(', ')}`)
       chartProviders = _.merge({}, charts, onlineProviders)
-      // Do not register routes if plugin has been started once already
-      pluginStarted === false && registerRoutes()
-      pluginStarted = true
+      // populate PMTiles metadata (requires router paths to be active)
+      pmtiles.getMetadata(chartProviders)
     }).catch(e => {
       console.error(`Error loading chart providers`, e.message)
       chartProviders = {}
@@ -68,48 +55,93 @@ module.exports = function(app) {
   function stop() {
   }
 
+
+  async function getMapTiles(params, response) {
+    const { identifier, z, x, y } = params
+    const provider = chartProviders[identifier]
+    if (!provider) {
+      return response.sendStatus(404)
+    }
+    switch (provider._fileFormat) {
+      case 'directory':
+        return serveTileFromFilesystem(response, provider, z, x, y)
+      case 'mbtiles':
+        return serveTileFromMbtiles(response, provider, z, x, y)
+      default:
+        throw new Error(`Unknown chart provider fileformat ${provider._fileFormat}`)
+    }
+  }
+
   function registerRoutes() {
 
-    app.get(apiPath + '/charts/:identifier/:z([0-9]*)/:x([0-9]*)/:y([0-9]*)', (req, res) => {
-      const { identifier, z, x, y } = req.params
-      const provider = chartProviders[identifier]
-      if (!provider) {
-        res.sendStatus(404)
-        return
-      }
-      switch (provider._fileFormat) {
-        case 'directory':
-          return serveTileFromFilesystem(res, provider, z, x, y)
-        case 'mbtiles':
-          return serveTileFromMbtiles(res, provider, z, x, y)
-        default:
-          console.error(`Unknown chart provider fileformat ${provider._fileFormat}`)
+    app.debug('** Registering routes **')
+
+    app.get(
+      `${apiRoutePrefix[1]}/charts/:identifier/:z([0-9]*)/:x([0-9]*)/:y([0-9]*)`, 
+      async (req, res) => {
+        try {
+          const r = await getMapTiles(req.params, res)
+          return r
+        } catch (err) {
           res.status(500).send()
+        }
+      }
+    )
+
+    app.get(`${apiRoutePrefix[2]}/charts/:identifier/:z([0-9]*)/:x([0-9]*)/:y([0-9]*)`, 
+      async (req, res) => {
+        try {
+          const r = await getMapTiles(req.params, res)
+          return r
+        } catch (err) {
+          res.status(500).send()
+        }
+      }
+    )
+
+    app.debug('** Registering v1 API paths **')
+
+    app.get(apiRoutePrefix[1] + "/charts/:identifier", (req, res) => {
+      const { identifier } = req.params
+      const provider = chartProviders[identifier]
+      if (provider) {
+        return res.json(sanitizeProvider(provider))
+      } else {
+        return res.status(404).send('Not found')
       }
     })
 
-    if (apiVersion === 1) {
-      app.debug('** Registering v1 API paths **')
-      app.get(apiPath + "/charts/:identifier", (req, res) => {
-        const { identifier } = req.params
-        const provider = chartProviders[identifier]
-        if (provider) {
-          return res.json(sanitizeProvider(provider))
-        } else {
-          return res.status(404).send('Not found')
-        }
-      })
+    app.get(apiRoutePrefix[1] + "/charts", (req, res) => {
+      const sanitized = _.mapValues(chartProviders, (provider) => sanitizeProvider(provider))
+      res.json(sanitized)
+    })
 
-      app.get(apiPath + "/charts", (req, res) => {
-        const sanitized = _.mapValues(chartProviders, sanitizeProvider)
-        res.json(sanitized)
-      })
-    } else {
+    // v2 routes
+    if (serverMajorVersion === 2) {
+      app.debug('** Registering v2 API paths **')
       registerAsProvider()
     }
-
   }
 
+  // plugin service endpoints
+  function initPluginApi(router) {
+
+    app.debug('** Registering Plugin api endpoints **')
+
+    // get PMTiles file contents
+    router.get(`/pmtiles/:identifier`, (req, res) => {
+      app.debug(`GET /pmtiles/${req.params.identifier}`)
+      const { identifier } = req.params
+      const provider = chartProviders[identifier]
+      if (provider) {
+        res.sendFile(provider._filePath)
+      } else {
+        res.status(404).send('Not found')
+      }
+    })
+  }
+
+  // Resources API provider registration
   function registerAsProvider() {
     app.debug('** Registering as Resource Provider for `charts` **')
     try {
@@ -119,14 +151,14 @@ module.exports = function(app) {
           listResources: (params) => {
             app.debug(`** listResources()`, params)
             return Promise.resolve(
-               _.mapValues(chartProviders, sanitizeProvider)
+               _.mapValues(chartProviders, (provider) => sanitizeProvider(provider, 2))
             )
           },
           getResource: (id) => {
             app.debug(`** getResource()`, id)
             const provider = chartProviders[id]
             if (provider) {
-              return Promise.resolve(sanitizeProvider(provider))
+              return Promise.resolve(sanitizeProvider(provider, 2))
             } else {
               throw new Error('Chart not found!')
             }
@@ -140,7 +172,7 @@ module.exports = function(app) {
         }
       })
     } catch (error) {
-      debug('Failed Provider Registration!')
+      app.debug('Failed Provider Registration!')
     }
   }
 
@@ -150,17 +182,8 @@ module.exports = function(app) {
     description: 'Singal K Charts resource',
     schema: {
       title: 'Signal K Charts',
-     
       type: 'object',
       properties: {
-        api: {
-          type: 'number',
-          title: 'Signal K API version to use (*server restart required)',
-          description: '0 = Auto (determined by server version). Defines path to "/signalk/v{}/api/resources/charts"',
-          default: 0,
-          minimum: 0,
-          maximum: 2
-        },
         chartPaths: {
           type: 'array',
           title: 'Chart paths',
@@ -236,7 +259,10 @@ module.exports = function(app) {
       }
     },
     start,
-    stop
+    stop,
+    registerWithRouter: (router) => {
+      return initPluginApi(router);
+    }
   }
 }
 
@@ -252,7 +278,7 @@ function resolveUniqueChartPaths(chartPaths, configBasePath) {
   return _.uniq(paths)
 }
 
-function convertOnlineProviderConfig(provider, version = 1) {
+function convertOnlineProviderConfig(provider) {
   const id = _.kebabCase(_.deburr(provider.name))
   const data = {
     identifier: id,
@@ -262,26 +288,31 @@ function convertOnlineProviderConfig(provider, version = 1) {
     minzoom: Math.min(Math.max(1, provider.minzoom), 19),
     maxzoom: Math.min(Math.max(1, provider.maxzoom), 19),
     format: provider.format,
-    identifier: id,
-    scale: 250000
-  }
-  if (version ===1) {
-    return _.merge(data, {
+    scale: 250000,
+    type: (provider.serverType) ? provider.serverType : 'tilelayer',
+    v1: {
       tilemapUrl: provider.url,
-      type: (provider.serverType) ? provider.serverType : 'tilelayer',
       chartLayers: (provider.layers) ? provider.layers : null
-    })
-  } else {
-    return _.merge(data, {
-      tiles: [provider.url],
-      sourceType: (provider.serverType) ? provider.serverType : 'tilelayer',
+    },
+    v2: {
+      url: provider.url,
       layers: (provider.layers) ? provider.layers : null
-    })
+    }
   }
+  return data
 }
 
-function sanitizeProvider(provider) {
-  return _.omit(provider, ['_filePath', '_fileFormat', '_mbtilesHandle', '_flipY'])
+function sanitizeProvider(provider, version = 1) {
+  let v
+  if (version === 1) {
+    v =_.merge( {}, provider.v1)
+    v.tilemapUrl = v.tilemapUrl.replace('~basePath~', apiRoutePrefix[1])
+  } else if (version === 2) {
+    v =_.merge( {}, provider.v2)
+    v.url =v.url.replace('~basePath~', apiRoutePrefix[2])
+  }
+  provider = _.omit(provider, ['_filePath', '_fileFormat', '_mbtilesHandle', '_flipY', '_pmtilesHandle', 'v1', 'v2'])
+  return _.merge( provider, v)
 }
 
 function ensureDirectoryExists (path) {
