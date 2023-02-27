@@ -2,6 +2,16 @@
 
 Signal K Node server plugin to provide chart metadata, such as name, description and location of the actual chart tile data.
 
+Supports both v1 and v2 Signal K resources api paths.
+
+| Server Version | API | Path |
+|--- |--- |--- |
+| 1.x.x | v1 | `/signalk/v1/api/resources/charts` |
+| 2.x.x | v2 | `/signalk/v2/api/resources/charts` |
+
+    
+_Note: v2 resource paths will only be made available on Signal K server >= v2._
+
 ### Usage
 
 1. Install "Signal K Charts" plugin from Signal K Appstore
@@ -10,28 +20,11 @@ Signal K Node server plugin to provide chart metadata, such as name, description
 
 - Add "Chart paths" which are the paths to the folders where chart files are stored. Defaults to `${signalk-configuration-path}/charts`
 
-- Set the version of Signal K Resources API to use:
-
-    0. `(default)` : Signal K server major version is used to determine the API version to use. (_See examples below.)_
-
-        |Server Version | API | Path |
-        |--- |--- |--- |
-        | 1.x.x | v1 | `/signalk/v1/api/resources/charts` |
-        | 2.x.x | v2 | `/signalk/v2/api/resources/charts` |
-
-    1.  | API | Path |
-        |--- |--- |
-        | v1 | `/signalk/v1/api/resources/charts` |
-
-    2. | API | Path |
-        |--- |--- |
-        | v2 | `/signalk/v2/api/resources/charts` |
-    
-    _The selection you make will be determined by the Resources API version your chart plotter software supports._
 
 3. Add "Chart paths" in plugin configuration. Defaults to `${signalk-configuration-path}/charts`
 
-<img src="https://user-images.githubusercontent.com/38519157/168979985-1eb4a940-7b1d-4800-a3b7-4acc7c00162e.png" alt="Chart paths configuration" width="450"/>
+<img src="https://user-images.githubusercontent.com/1435910/39382493-57c1e4dc-4a6e-11e8-93e1-cedb4c7662f4.png" alt="Chart paths configuration" width="450"/>
+
 
 4. Put charts into selected paths
 
@@ -39,8 +32,12 @@ Signal K Node server plugin to provide chart metadata, such as name, description
 
 <img src="https://user-images.githubusercontent.com/1435910/45048136-c65d2e80-b083-11e8-99db-01e8cece9f89.png" alt="Online chart providers configuration" width="450"/>
 
+
+
+
 _WMS example:_
-![image](https://user-images.githubusercontent.com/38519157/102832518-90077100-443e-11eb-9a1d-d0806bb2b10b.png)
+
+<img src="https://user-images.githubusercontent.com/38519157/102832518-90077100-443e-11eb-9a1d-d0806bb2b10b.png" alt="server type configuration" width="450"/>
 
 6. Activate plugin
 

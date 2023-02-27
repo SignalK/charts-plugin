@@ -55,46 +55,25 @@ module.exports = function(app) {
   function stop() {
   }
 
-
-  async function getMapTiles(params, response) {
-    const { identifier, z, x, y } = params
-    const provider = chartProviders[identifier]
-    if (!provider) {
-      return response.sendStatus(404)
-    }
-    switch (provider._fileFormat) {
-      case 'directory':
-        return serveTileFromFilesystem(response, provider, z, x, y)
-      case 'mbtiles':
-        return serveTileFromMbtiles(response, provider, z, x, y)
-      default:
-        throw new Error(`Unknown chart provider fileformat ${provider._fileFormat}`)
-    }
-  }
-
   function registerRoutes() {
 
-    app.debug('** Registering routes **')
+    app.debug('** Registering API paths **')
 
-    app.get(
-      `${apiRoutePrefix[1]}/charts/:identifier/:z([0-9]*)/:x([0-9]*)/:y([0-9]*)`, 
+    app.get(`/signalk/:version(v[1-2])/api/resources/charts/:identifier/:z([0-9]*)/:x([0-9]*)/:y([0-9]*)`, 
       async (req, res) => {
-        try {
-          const r = await getMapTiles(req.params, res)
-          return r
-        } catch (err) {
-          res.status(500).send()
+        const { identifier, z, x, y } = req.params
+        const provider = chartProviders[identifier]
+        if (!provider) {
+          return res.sendStatus(404)
         }
-      }
-    )
-
-    app.get(`${apiRoutePrefix[2]}/charts/:identifier/:z([0-9]*)/:x([0-9]*)/:y([0-9]*)`, 
-      async (req, res) => {
-        try {
-          const r = await getMapTiles(req.params, res)
-          return r
-        } catch (err) {
-          res.status(500).send()
+        switch (provider._fileFormat) {
+          case 'directory':
+            return serveTileFromFilesystem(res, provider, z, x, y)
+          case 'mbtiles':
+            return serveTileFromMbtiles(res, provider, z, x, y)
+          default:
+            console.log(`Unknown chart provider fileformat ${provider._fileFormat}`)
+            res.status(500).send()
         }
       }
     )

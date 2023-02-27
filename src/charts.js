@@ -5,7 +5,6 @@ const MBTiles = require('@mapbox/mbtiles')
 const xml2js = require('xml2js')
 const fs = Promise.promisifyAll(require('fs'))
 const _ = require('lodash')
-const {apiRoutePrefix} = require('./constants')
 const pmtiles = require('./pmtiles')
 
 function findCharts(chartBaseDir, hostPort = 3000) {
