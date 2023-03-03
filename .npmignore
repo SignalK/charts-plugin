@@ -1,3 +1,10 @@
 node_modules/
 .DS_Store
 test/
+package-lock.json
+/src
+tsconfig.json
+eslintrs.js
+tsconfig.json
+prettierrc.json
+.github/
