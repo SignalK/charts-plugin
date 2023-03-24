@@ -19,6 +19,9 @@ function findCharts(chartBaseDir, hostPort = 3000) {
         if (isMbtilesFile) {
           return openMbtilesFile(file, filename)
         } else if (isPmtilesFile) {
+          if (Number(process.versions.node.split('.')[0]) < 18) {
+            return Promise.resolve(null)
+          }
           return pmtiles.openPMTilesFile(chartBaseDir, filename, hostPort)
         } else if (isDirectory) {
           return  directoryToMapInfo(file, filename)
