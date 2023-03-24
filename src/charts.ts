@@ -7,7 +7,7 @@ import * as _ from 'lodash'
 import { openPMTilesFile } from './pmtiles'
 import { ChartProvider } from './types'
 
-export function findCharts(chartBaseDir: string, hostPort = 3000) {
+export function findCharts(chartBaseDir: string, urlBase: string) {
   return fs
     .readdir(chartBaseDir, { withFileTypes: true })
     .then((files) => {
@@ -19,7 +19,10 @@ export function findCharts(chartBaseDir: string, hostPort = 3000) {
         if (isMbtilesFile) {
           return openMbtilesFile(filePath, file.name)
         } else if (isPmtilesFile) {
-          return openPMTilesFile(chartBaseDir, file.name, hostPort)
+          if (Number(process.versions.node.split('.')[0]) < 18) {
+            return Promise.resolve(null)
+          } 
+          return openPMTilesFile(chartBaseDir, file.name, urlBase)
         } else if (isDirectory) {
           return directoryToMapInfo(filePath, file.name)
         } else {

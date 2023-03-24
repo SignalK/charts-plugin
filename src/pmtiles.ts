@@ -5,12 +5,12 @@ import { ChartProvider } from './types'
 export async function openPMTilesFile(
   baseDir: string,
   filename: string,
-  port = 3000
+  urlBase: string
 ) {
   const pluginApiPath = '/plugins/charts/pmtiles/'
-  const pmPath = `http://localhost:${port}${pluginApiPath}${filename}`
+  const pmPath = `${urlBase}${pluginApiPath}${filename}`
   const pmt = new pmtiles.PMTiles(pmPath)
-  const pMap: ChartProvider = {
+  const pmtMap: ChartProvider = {
     _fileFormat: 'pmtiles',
     _filePath: `${baseDir}/${filename}`,
     _pmtilesHandle: pmt,
@@ -35,7 +35,7 @@ export async function openPMTilesFile(
         format:
         layers: */
   }
-  return pMap
+  return pmtMap
 }
 
 export async function getMetadata(chartProviders: {

@@ -8,3 +8,4 @@ eslintrs.js
 tsconfig.json
 prettierrc.json
 .github/
+tsconfig.tsbuildinfo

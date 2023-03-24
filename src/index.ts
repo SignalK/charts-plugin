@@ -31,7 +31,7 @@ interface ChartProviderApp
   debug: (...msg: unknown[]) => void
   setPluginStatus: (pluginId: string, status?: string) => void
   setPluginError: (pluginId: string, status?: string) => void
-  config: { configPath: string; version: string; getExternalPort: () => number }
+  config: {ssl: boolean, configPath: string; version: string; getExternalPort: () => number}
 }
 
 module.exports = (app: ChartProviderApp): Plugin => {
@@ -45,6 +45,8 @@ module.exports = (app: ChartProviderApp): Plugin => {
   const defaultChartsPath = path.join(configBasePath, '/charts')
   const serverMajorVersion = parseInt(app.config.version.split('.')[0])
   ensureDirectoryExists(defaultChartsPath)
+
+
 
   const doStartup = (config: Config) => {
     app.debug('** loaded config: ', config)
@@ -72,12 +74,13 @@ module.exports = (app: ChartProviderApp): Plugin => {
     // Do not register routes if plugin has been started once already
     pluginStarted === false && registerRoutes()
     pluginStarted = true
-    const hostPort = app.config.getExternalPort() || 3000
+    const urlBase = `${app.config.ssl ? 'https' : 'http'}://localhost:${app.config.getExternalPort() || 3000}`
+    app.debug('**urlBase**', urlBase)
     app.setPluginStatus('Started')
 
     const loadProviders = bluebird
       .mapSeries(chartPaths, (chartPath: string) =>
-        findCharts(chartPath, hostPort)
+        findCharts(chartPath, urlBase)
       )
       .then((list: ChartProvider[]) =>
         _.reduce(list, (result, charts) => _.merge({}, result, charts), {})
