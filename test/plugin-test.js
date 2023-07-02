@@ -8,7 +8,7 @@ const chaiHttp = require('chai-http')
 const Promise = require('bluebird')
 const express = require('express')
 const expect = chai.expect
-const Plugin = require('../src/plugin')
+const Plugin = require('../plugin/index')
 const expectedCharts = require('./expected-charts.json')
 
 chai.use(chaiHttp)
