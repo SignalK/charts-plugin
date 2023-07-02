@@ -1,9 +1,6 @@
-import { PMTiles } from 'pmtiles'
-
 export interface ChartProvider {
-  _fileFormat?: 'pmtiles' | 'mbtiles' | 'directory'
+  _fileFormat?: 'mbtiles' | 'directory'
   _filePath: string
-  _pmtilesHandle?: PMTiles
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   _mbtilesHandle?: any
   _flipY?: boolean

@@ -4,25 +4,18 @@ import MBTiles from '@mapbox/mbtiles'
 import * as xml2js from 'xml2js'
 import { Dirent, promises as fs } from 'fs'
 import * as _ from 'lodash'
-import { openPMTilesFile } from './pmtiles'
 import { ChartProvider } from './types'
 
-export function findCharts(chartBaseDir: string, urlBase: string) {
+export function findCharts(chartBaseDir: string) {
   return fs
     .readdir(chartBaseDir, { withFileTypes: true })
     .then((files) => {
       return bluebird.mapSeries(files, (file: Dirent) => {
         const isMbtilesFile = file.name.match(/\.mbtiles$/i)
-        const isPmtilesFile = file.name.match(/\.pmtiles$/i)
         const filePath = path.resolve(chartBaseDir, file.name)
         const isDirectory = file.isDirectory()
         if (isMbtilesFile) {
           return openMbtilesFile(filePath, file.name)
-        } else if (isPmtilesFile) {
-          if (Number(process.versions.node.split('.')[0]) < 18) {
-            return Promise.resolve(null)
-          } 
-          return openPMTilesFile(chartBaseDir, file.name, urlBase)
         } else if (isDirectory) {
           return directoryToMapInfo(filePath, file.name)
         } else {

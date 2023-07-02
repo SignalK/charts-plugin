@@ -2,11 +2,10 @@ import * as bluebird from 'bluebird'
 import path from 'path'
 import fs from 'fs'
 import * as _ from 'lodash'
-import { getMetadata } from './pmtiles'
 import { findCharts } from './charts'
 import { apiRoutePrefix } from './constants'
 import { ChartProvider, OnlineChartProvider } from './types'
-import { Request, Response, IRouter, Application } from 'express'
+import { Request, Response, Application } from 'express'
 import { OutgoingHttpHeaders } from 'http'
 import {
   Plugin,
@@ -31,7 +30,12 @@ interface ChartProviderApp
   debug: (...msg: unknown[]) => void
   setPluginStatus: (pluginId: string, status?: string) => void
   setPluginError: (pluginId: string, status?: string) => void
-  config: {ssl: boolean, configPath: string; version: string; getExternalPort: () => number}
+  config: {
+    ssl: boolean
+    configPath: string
+    version: string
+    getExternalPort: () => number
+  }
 }
 
 module.exports = (app: ChartProviderApp): Plugin => {
@@ -45,8 +49,6 @@ module.exports = (app: ChartProviderApp): Plugin => {
   const defaultChartsPath = path.join(configBasePath, '/charts')
   const serverMajorVersion = parseInt(app.config.version.split('.')[0])
   ensureDirectoryExists(defaultChartsPath)
-
-
 
   const doStartup = (config: Config) => {
     app.debug('** loaded config: ', config)
@@ -74,14 +76,14 @@ module.exports = (app: ChartProviderApp): Plugin => {
     // Do not register routes if plugin has been started once already
     pluginStarted === false && registerRoutes()
     pluginStarted = true
-    const urlBase = `${app.config.ssl ? 'https' : 'http'}://localhost:${app.config.getExternalPort() || 3000}`
+    const urlBase = `${app.config.ssl ? 'https' : 'http'}://localhost:${
+      app.config.getExternalPort() || 3000
+    }`
     app.debug('**urlBase**', urlBase)
     app.setPluginStatus('Started')
 
     const loadProviders = bluebird
-      .mapSeries(chartPaths, (chartPath: string) =>
-        findCharts(chartPath, urlBase)
-      )
+      .mapSeries(chartPaths, (chartPath: string) => findCharts(chartPath))
       .then((list: ChartProvider[]) =>
         _.reduce(list, (result, charts) => _.merge({}, result, charts), {})
       )
@@ -94,8 +96,6 @@ module.exports = (app: ChartProviderApp): Plugin => {
           } charts from ${chartPaths.join(', ')}`
         )
         chartProviders = _.merge({}, charts, onlineProviders)
-        // populate PMTiles metadata (requires router paths to be active)
-        getMetadata(chartProviders)
       })
       .catch((e: Error) => {
         console.error(`Error loading chart providers`, e.message)
@@ -168,23 +168,6 @@ module.exports = (app: ChartProviderApp): Plugin => {
       app.debug('** Registering v2 API paths **')
       registerAsProvider()
     }
-  }
-
-  // plugin service endpoints
-  const initPluginApi = (router: IRouter) => {
-    app.debug('** Registering Plugin api endpoints **')
-
-    // get PMTiles file contents
-    router.get(`/pmtiles/:identifier`, (req: Request, res: Response) => {
-      app.debug(`GET /pmtiles/${req.params.identifier}`)
-      const { identifier } = req.params
-      const provider = chartProviders[identifier]
-      if (provider) {
-        res.sendFile(provider._filePath)
-      } else {
-        res.status(404).send('Not found')
-      }
-    })
   }
 
   // Resources API provider registration
@@ -324,9 +307,6 @@ module.exports = (app: ChartProviderApp): Plugin => {
     },
     stop: () => {
       app.setPluginStatus('stopped')
-    },
-    registerWithRouter: (router) => {
-      return initPluginApi(router)
     }
   }
 
@@ -481,7 +461,6 @@ const sanitizeProvider = (provider: ChartProvider, version = 1) => {
     '_fileFormat',
     '_mbtilesHandle',
     '_flipY',
-    '_pmtilesHandle',
     'v1',
     'v2'
   ]) as ChartProvider
