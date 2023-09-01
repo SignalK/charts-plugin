@@ -47,7 +47,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
   }
   const configBasePath = app.config.configPath
   const defaultChartsPath = path.join(configBasePath, '/charts')
-  const serverMajorVersion = parseInt(app.config.version.split('.')[0])
+  const serverMajorVersion = app.config.version ? parseInt(app.config.version.split('.')[0]) : '1'
   ensureDirectoryExists(defaultChartsPath)
 
   const doStartup = (config: Config) => {
