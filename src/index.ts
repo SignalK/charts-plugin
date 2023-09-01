@@ -77,7 +77,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
     pluginStarted === false && registerRoutes()
     pluginStarted = true
     const urlBase = `${app.config.ssl ? 'https' : 'http'}://localhost:${
-      app.config.getExternalPort() || 3000
+      app.config?.getExternalPort() || 3000
     }`
     app.debug('**urlBase**', urlBase)
     app.setPluginStatus('Started')
