@@ -304,6 +304,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     start: (settings: any) => {
       doStartup(settings)
+      return Promise.resolve // required for tests
     },
     stop: () => {
       app.setPluginStatus('stopped')
