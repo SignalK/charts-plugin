@@ -179,6 +179,14 @@ const createDefaultApp = () => {
   app.use(require('body-parser').json())
   app.debug = (x) => console.log(x)
   app.config = { configPath: path.resolve(__dirname) }
+
+  app.statusMessage = () => 'started'
+  app.error = (msg) => undefined
+  app.debug = (...msg) => undefined
+  app.setPluginStatus = (pluginId, status) => undefined
+  app.setPluginError = (pluginId, status) => undefined
+
+
   return new Promise((resolve, reject) => {
     const server = http.createServer(app)
     server.listen(() => {
