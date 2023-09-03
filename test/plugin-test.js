@@ -79,7 +79,7 @@ describe('GET /resources/charts', () => {
           maxzoom: 15,
           minzoom: 2,
           name: 'Test Name',
-          scale: 'N/A',
+          scale: 250000,
           tilemapUrl: 'https://example.com',
           type: 'tilelayer',
           chartLayers: null
@@ -105,6 +105,7 @@ describe('GET /resources/charts', () => {
         expect(result.status).to.equal(404)
       })
   })
+  
 })
 
 describe('GET /resources/charts/:identifier/:z/:x/:y', () => {
@@ -165,6 +166,7 @@ describe('GET /resources/charts/:identifier/:z/:x/:y', () => {
       })
   })
 })
+
 
 const expectTileResponse = (response, expectedTilePath, expectedFormat) => {
   const expectedTile = fs.readFileSync(path.resolve(__dirname, expectedTilePath))

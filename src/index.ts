@@ -303,8 +303,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
     uiSchema: () => CONFIG_UISCHEMA,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     start: (settings: any) => {
-      doStartup(settings)
-      return Promise.resolve() // required for tests
+      return doStartup(settings) // return required for tests
     },
     stop: () => {
       app.setPluginStatus('stopped')
