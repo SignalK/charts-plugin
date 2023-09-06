@@ -347,6 +347,7 @@ const convertOnlineProviderConfig = (provider: OnlineChartProvider) => {
     format: provider.format,
     scale: 250000,
     type: provider.serverType ? provider.serverType : 'tilelayer',
+    style: provider.style ? provider.style : null,
     v1: {
       tilemapUrl: provider.url,
       chartLayers: provider.layers ? provider.layers : null

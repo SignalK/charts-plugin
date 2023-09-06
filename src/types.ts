@@ -1,3 +1,5 @@
+type MapSourceType = 'tilelayer' | 'S-57' | 'WMS' | 'WMTS' | 'mapstyleJSON' | 'tileJSON'
+
 export interface ChartProvider {
   _fileFormat?: 'mbtiles' | 'directory'
   _filePath: string
@@ -7,7 +9,7 @@ export interface ChartProvider {
   identifier: string
   name: string
   description: string
-  type: 'tilelayer'
+  type: MapSourceType
   scale: number
   v1?: {
     tilemapUrl: string
@@ -21,6 +23,7 @@ export interface ChartProvider {
   minzoom?: number
   maxzoom?: number
   format?: string
+  style?: string
   layers?: string[]
 }
 
@@ -29,8 +32,9 @@ export interface OnlineChartProvider {
   description: string
   minzoom: number
   maxzoom: number
-  serverType: 'tilelayer' | 'WMS' | 'WMTS'
+  serverType: MapSourceType
   format: 'png' | 'jpg'
   url: string
+  style: string
   layers: string[]
 }

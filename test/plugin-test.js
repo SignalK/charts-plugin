@@ -80,6 +80,7 @@ describe('GET /resources/charts', () => {
           minzoom: 2,
           name: 'Test Name',
           scale: 250000,
+          "style": null,
           tilemapUrl: 'https://example.com',
           type: 'tilelayer',
           chartLayers: null
