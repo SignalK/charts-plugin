@@ -211,12 +211,12 @@ function parseMetadataJson(metadataJson: string) {
       const res: ChartProvider = {
         _flipY: false,
         name: metadata.name || metadata.id,
-        description: metadata.description,
+        description: metadata.description || '',
         bounds: parseBounds(metadata.bounds),
         minzoom: parseIntIfNotUndefined(metadata.minzoom),
         maxzoom: parseIntIfNotUndefined(metadata.maxzoom),
         format: metadata.format,
-        type: 'tilelayer',
+        type: metadata.type,
         scale: parseInt(metadata.scale) || 250000,
         identifier: '',
         _filePath: ''
