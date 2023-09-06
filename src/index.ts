@@ -50,6 +50,112 @@ module.exports = (app: ChartProviderApp): Plugin => {
   const serverMajorVersion = app.config.version ? parseInt(app.config.version.split('.')[0]) : '1'
   ensureDirectoryExists(defaultChartsPath)
 
+  // ******** REQUIRED PLUGIN DEFINITION *******
+  const CONFIG_SCHEMA = {
+    title: 'Signal K Charts',
+    type: 'object',
+    properties: {
+      chartPaths: {
+        type: 'array',
+        title: 'Chart paths',
+        description: `Add one or more paths to find charts. Defaults to "${defaultChartsPath}"`,
+        items: {
+          type: 'string',
+          title: 'Path',
+          description: `Path for chart files, relative to "${configBasePath}"`
+        }
+      },
+      onlineChartProviders: {
+        type: 'array',
+        title: 'Online chart providers',
+        items: {
+          type: 'object',
+          title: 'Provider',
+          required: ['name', 'minzoom', 'maxzoom', 'format', 'url'],
+          properties: {
+            name: {
+              type: 'string',
+              title: 'Name'
+            },
+            description: {
+              type: 'string',
+              title: 'Description'
+            },
+            minzoom: {
+              type: 'number',
+              title: `Minimum zoom level, between [${MIN_ZOOM}, ${MAX_ZOOM}]`,
+              maximum: MAX_ZOOM,
+              minimum: MIN_ZOOM,
+              default: MIN_ZOOM
+            },
+            maxzoom: {
+              type: 'number',
+              title: `Maximum zoom level, between [${MIN_ZOOM}, ${MAX_ZOOM}]`,
+              maximum: MAX_ZOOM,
+              minimum: MIN_ZOOM,
+              default: 15
+            },
+            serverType: {
+              type: 'string',
+              title: 'Map source / server type',
+              default: 'tilelayer',
+              enum: ['tilelayer', 'S-57', 'WMS', 'WMTS', 'mapstyleJSON', 'tileJSON'],
+              description:
+                'Map data source type served by the supplied url. (Use tilelayer for xyz / tms tile sources.)'
+            },
+            format: {
+              type: 'string',
+              title: 'Format',
+              default: 'png',
+              enum: ['png', 'jpg', 'pbf'],
+              description:
+                'Format of map tiles: raster (png, jpg, etc.) / vector (pbf).'
+            },
+            url: {
+              type: 'string',
+              title: 'URL',
+              description:
+                'Map URL (for tilelayer include {z}, {x} and {y} parameters, e.g. "http://example.org/{z}/{x}/{y}.png")'
+            },
+            style: {
+              type: 'string',
+              title: 'Vector Map Style',
+              description:
+                'Path to file containing map style definitions for Vector maps (e.g. "http://example.org/styles/mymapstyle.json")'
+            },
+            layers: {
+              type: 'array',
+              title: 'Layers',
+              description:
+                'List of map layer ids to display. (Use with WMS / WMTS types.)',
+              items: {
+                title: 'Layer Name',
+                description: 'Name of layer to display',
+                type: 'string'
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  const CONFIG_UISCHEMA = {}
+
+  const plugin: Plugin = {
+    id: 'charts',
+    name: 'Signal K Charts',
+    schema: () => CONFIG_SCHEMA,
+    uiSchema: () => CONFIG_UISCHEMA,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    start: (settings: any) => {
+      return doStartup(settings) // return required for tests
+    },
+    stop: () => {
+      app.setPluginStatus('stopped')
+    }
+  }
+
   const doStartup = (config: Config) => {
     app.debug('** loaded config: ', config)
     props = { ...config }
@@ -93,7 +199,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
         app.debug(
           `Chart plugin: Found ${
             _.keys(charts).length
-          } charts from ${chartPaths.join(', ')}`
+          } charts from ${chartPaths.join(', ')}.`
         )
         chartProviders = _.merge({}, charts, onlineProviders)
       })
@@ -210,201 +316,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
     }
   }
 
-  const CONFIG_SCHEMA = {
-    title: 'Signal K Charts',
-    type: 'object',
-    properties: {
-      chartPaths: {
-        type: 'array',
-        title: 'Chart paths',
-        description: `Add one or more paths to find charts. Defaults to "${defaultChartsPath}"`,
-        items: {
-          type: 'string',
-          title: 'Path',
-          description: `Path for chart files, relative to "${configBasePath}"`
-        }
-      },
-      onlineChartProviders: {
-        type: 'array',
-        title: 'Online chart providers',
-        items: {
-          type: 'object',
-          title: 'Provider',
-          required: ['name', 'minzoom', 'maxzoom', 'format', 'url'],
-          properties: {
-            name: {
-              type: 'string',
-              title: 'Name'
-            },
-            description: {
-              type: 'string',
-              title: 'Description'
-            },
-            minzoom: {
-              type: 'number',
-              title: `Minimum zoom level, between [${MIN_ZOOM}, ${MAX_ZOOM}]`,
-              maximum: MAX_ZOOM,
-              minimum: MIN_ZOOM,
-              default: MIN_ZOOM
-            },
-            maxzoom: {
-              type: 'number',
-              title: `Maximum zoom level, between [${MIN_ZOOM}, ${MAX_ZOOM}]`,
-              maximum: MAX_ZOOM,
-              minimum: MIN_ZOOM,
-              default: 15
-            },
-            serverType: {
-              type: 'string',
-              title: 'Map source / server type',
-              default: 'tilelayer',
-              enum: ['tilelayer', 'tileJSON', 'WMS', 'WMTS'],
-              description:
-                'Map data source type served by the supplied url. (Use tilelayer for xyz / tms tile sources.)'
-            },
-            format: {
-              type: 'string',
-              title: 'Format',
-              default: 'png',
-              enum: ['png', 'jpg', 'pbf'],
-              description:
-                'Format of map tiles: raster (png, jpg, etc.) / vector (pbf).'
-            },
-            url: {
-              type: 'string',
-              title: 'URL',
-              description:
-                'Map URL (for tilelayer include {z}, {x} and {y} parameters, e.g. "http://example.org/{z}/{x}/{y}.png")'
-            },
-            layers: {
-              type: 'array',
-              title: 'Layers',
-              description:
-                'List of map layer ids to display. (Use with WMS / WMTS types.)',
-              items: {
-                title: 'Layer Name',
-                description: 'Name of layer to display',
-                type: 'string'
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-
-  const CONFIG_UISCHEMA = {}
-
-  // ******** REQUIRED PLUGIN DEFINITION *******
-  const plugin: Plugin = {
-    id: 'charts',
-    name: 'Signal K Charts',
-    schema: () => CONFIG_SCHEMA,
-    uiSchema: () => CONFIG_UISCHEMA,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    start: (settings: any) => {
-      return doStartup(settings) // return required for tests
-    },
-    stop: () => {
-      app.setPluginStatus('stopped')
-    }
-  }
-
   return plugin
-  // ************************************
-
-  /*return {
-    id: 'charts',
-    name: 'Signal K Charts',
-    description: 'Singal K Charts resource',
-    schema: {
-      title: 'Signal K Charts',
-      type: 'object',
-      properties: {
-        chartPaths: {
-          type: 'array',
-          title: 'Chart paths',
-          description: `Add one or more paths to find charts. Defaults to "${defaultChartsPath}"`,
-          items: {
-            type: 'string',
-            title: 'Path',
-            description: `Path for chart files, relative to "${configBasePath}"`
-          }
-        },
-        onlineChartProviders: {
-          type: 'array',
-          title: 'Online chart providers',
-          items: {
-            type: 'object',
-            title: 'Provider',
-            required: ['name', 'minzoom', 'maxzoom', 'format', 'url'],
-            properties: {
-              name: {
-                type: 'string',
-                title: 'Name'
-              },
-              description: {
-                type: 'string',
-                title: 'Description'
-              },
-              minzoom: {
-                type: 'number',
-                title: `Minimum zoom level, between [${MIN_ZOOM}, ${MAX_ZOOM}]`,
-                maximum: MAX_ZOOM,
-                minimum: MIN_ZOOM,
-                default: MIN_ZOOM
-              },
-              maxzoom: {
-                type: 'number',
-                title: `Maximum zoom level, between [${MIN_ZOOM}, ${MAX_ZOOM}]`,
-                maximum: MAX_ZOOM,
-                minimum: MIN_ZOOM,
-                default: 15
-              },
-              serverType: {
-                type: 'string',
-                title: 'Map source / server type',
-                default: 'tilelayer',
-                enum: ['tilelayer', 'tileJSON', 'WMS', 'WMTS'],
-                description:
-                  'Map data source type served by the supplied url. (Use tilelayer for xyz / tms tile sources.)'
-              },
-              format: {
-                type: 'string',
-                title: 'Format',
-                default: 'png',
-                enum: ['png', 'jpg', 'pbf'],
-                description:
-                  'Format of map tiles: raster (png, jpg, etc.) / vector (pbf).'
-              },
-              url: {
-                type: 'string',
-                title: 'URL',
-                description:
-                  'Map URL (for tilelayer include {z}, {x} and {y} parameters, e.g. "http://example.org/{z}/{x}/{y}.png")'
-              },
-              layers: {
-                type: 'array',
-                title: 'Layers',
-                description:
-                  'List of map layer ids to display. (Use with WMS / WMTS types.)',
-                items: {
-                  title: 'Layer Name',
-                  description: 'Name of layer to display',
-                  type: 'string'
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    start,
-    stop,
-    registerWithRouter: (router: IRouter) => {
-      return initPluginApi(router)
-    }
-  }*/
 }
 
 const responseHttpOptions = {
