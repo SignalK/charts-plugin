@@ -1,27 +1,47 @@
-# Signal K Node server Charts plugin
+# Signal K server Charts plugin
 
 Signal K Node server plugin to provide chart metadata, such as name, description and location of the actual chart tile data.
+
+Supports both v1 and v2 Signal K resources api paths.
+
+| Server Version | API | Path |
+|--- |--- |--- |
+| 1.x.x | v1 | `/signalk/v1/api/resources/charts` |
+| 2.x.x | v2 | `/signalk/v2/api/resources/charts` |
+
+    
+_Note: v2 resource paths will only be made available on Signal K server >= v2._
 
 ### Usage
 
 1. Install "Signal K Charts" plugin from Signal K Appstore
 
-2. Add "Chart paths" in plugin configuration. Defaults to `${signalk-configuration-path}/charts`
+2. Configure plugin in **Plugin Config** 
+
+- Add "Chart paths" which are the paths to the folders where chart files are stored. Defaults to `${signalk-configuration-path}/charts`
+
+
+3. Add "Chart paths" in plugin configuration. Defaults to `${signalk-configuration-path}/charts`
 
 <img src="https://user-images.githubusercontent.com/1435910/39382493-57c1e4dc-4a6e-11e8-93e1-cedb4c7662f4.png" alt="Chart paths configuration" width="450"/>
 
-3. Put charts into selected paths
 
-4. Add optional online chart providers
+4. Put charts into selected paths
+
+5. Add optional online chart providers
 
 <img src="https://user-images.githubusercontent.com/1435910/45048136-c65d2e80-b083-11e8-99db-01e8cece9f89.png" alt="Online chart providers configuration" width="450"/>
 
+
+
+
 _WMS example:_
-![image](https://user-images.githubusercontent.com/38519157/102832518-90077100-443e-11eb-9a1d-d0806bb2b10b.png)
 
-5. Activate plugin
+<img src="https://user-images.githubusercontent.com/38519157/102832518-90077100-443e-11eb-9a1d-d0806bb2b10b.png" alt="server type configuration" width="450"/>
 
-6. Use one of the client apps supporting Signal K charts, for example:
+6. Activate plugin
+
+7. Use one of the client apps supporting Signal K charts, for example:
 - [Freeboard SK](https://www.npmjs.com/package/@signalk/freeboard-sk)
 - [Tuktuk Chart Plotter](https://www.npmjs.com/package/tuktuk-chart-plotter)
 

@@ -8,7 +8,7 @@ const chaiHttp = require('chai-http')
 const Promise = require('bluebird')
 const express = require('express')
 const expect = chai.expect
-const Plugin = require('../src/plugin')
+const Plugin = require('../plugin/index')
 const expectedCharts = require('./expected-charts.json')
 
 chai.use(chaiHttp)
@@ -79,7 +79,8 @@ describe('GET /resources/charts', () => {
           maxzoom: 15,
           minzoom: 2,
           name: 'Test Name',
-          scale: 'N/A',
+          scale: 250000,
+          "style": null,
           tilemapUrl: 'https://example.com',
           type: 'tilelayer',
           chartLayers: null
@@ -105,6 +106,7 @@ describe('GET /resources/charts', () => {
         expect(result.status).to.equal(404)
       })
   })
+  
 })
 
 describe('GET /resources/charts/:identifier/:z/:x/:y', () => {
@@ -166,6 +168,7 @@ describe('GET /resources/charts/:identifier/:z/:x/:y', () => {
   })
 })
 
+
 const expectTileResponse = (response, expectedTilePath, expectedFormat) => {
   const expectedTile = fs.readFileSync(path.resolve(__dirname, expectedTilePath))
   expect(response.status).to.equal(200)
@@ -179,6 +182,14 @@ const createDefaultApp = () => {
   app.use(require('body-parser').json())
   app.debug = (x) => console.log(x)
   app.config = { configPath: path.resolve(__dirname) }
+
+  app.statusMessage = () => 'started'
+  app.error = (msg) => undefined
+  app.debug = (...msg) => undefined
+  app.setPluginStatus = (pluginId, status) => undefined
+  app.setPluginError = (pluginId, status) => undefined
+
+
   return new Promise((resolve, reject) => {
     const server = http.createServer(app)
     server.listen(() => {

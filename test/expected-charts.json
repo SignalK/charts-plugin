@@ -6,13 +6,14 @@
       -61.875,
       31.952162238
     ],
+    "chartLayers": [],
     "description": "CAROLINAS",
     "format": "png",
     "identifier": "test",
     "maxzoom": 5,
     "minzoom": 3,
     "name": "MBTILES_19",
-    "scale": "250000",
+    "scale": 250000,
     "tilemapUrl": "/signalk/v1/api/resources/charts/test/{z}/{x}/{y}",
     "type": "tilelayer"
   },
@@ -23,13 +24,14 @@
       25.541777414896345,
       66.0258911558707
     ],
+    "chartLayers": [],
     "description": "Översikt Svenska Sjökort",
     "format": "png",
     "identifier": "tms-tiles",
     "maxzoom": 5,
     "minzoom": 4,
     "name": "Översikt Svenska Sjökort",
-    "scale": "4000000",
+    "scale": 4000000,
     "tilemapUrl": "/signalk/v1/api/resources/charts/tms-tiles/{z}/{x}/{y}",
     "type": "tilelayer"
   },
@@ -40,13 +42,14 @@
       -61.875,
       31.952162238
     ],
+    "chartLayers": [],
     "description": "CAROLINAS",
     "format": "png",
     "identifier": "unpacked-tiles",
     "maxzoom": 4,
     "minzoom": 3,
     "name": "NOAA MBTiles test file",
-    "scale": "250000",
+    "scale": 250000,
     "tilemapUrl": "/signalk/v1/api/resources/charts/unpacked-tiles/{z}/{x}/{y}",
     "type": "tilelayer"
   }
