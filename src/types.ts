@@ -1,4 +1,10 @@
-type MapSourceType = 'tilelayer' | 'S-57' | 'WMS' | 'WMTS' | 'mapstyleJSON' | 'tileJSON'
+type MapSourceType =
+  | 'tilelayer'
+  | 'S-57'
+  | 'WMS'
+  | 'WMTS'
+  | 'mapstyleJSON'
+  | 'tileJSON'
 
 export interface ChartProvider {
   _fileFormat?: 'mbtiles' | 'directory'

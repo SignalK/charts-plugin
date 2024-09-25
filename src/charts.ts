@@ -80,13 +80,13 @@ function openMbtilesFile(file: string, filename: string) {
           type: 'tilelayer',
           scale: parseInt(res.metadata.scale) || 250000,
           v1: {
-            tilemapUrl: `~basePath~/charts/${identifier}/{z}/{x}/{y}`,
+            tilemapUrl: `~basePath~/${identifier}/{z}/{x}/{y}`,
             chartLayers: res.metadata.vector_layers
               ? parseVectorLayers(res.metadata.vector_layers)
               : []
           },
           v2: {
-            url: `~basePath~/charts/${identifier}/{z}/{x}/{y}`,
+            url: `~basePath~/${identifier}/{z}/{x}/{y}`,
             layers: res.metadata.vector_layers
               ? parseVectorLayers(res.metadata.vector_layers)
               : []
@@ -133,11 +133,11 @@ function directoryToMapInfo(file: string, identifier: string) {
         ;(info._fileFormat = 'directory'),
           (info._filePath = file),
           (info.v1 = {
-            tilemapUrl: `~basePath~/charts/${identifier}/{z}/{x}/{y}`,
+            tilemapUrl: `~basePath~/${identifier}/{z}/{x}/{y}`,
             chartLayers: []
           })
         info.v2 = {
-          url: `~basePath~/charts/${identifier}/{z}/{x}/{y}`,
+          url: `~basePath~/${identifier}/{z}/{x}/{y}`,
           layers: []
         }
 

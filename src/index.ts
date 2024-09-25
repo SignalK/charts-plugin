@@ -3,7 +3,6 @@ import path from 'path'
 import fs from 'fs'
 import * as _ from 'lodash'
 import { findCharts } from './charts'
-import { apiRoutePrefix } from './constants'
 import { ChartProvider, OnlineChartProvider } from './types'
 import { Request, Response, Application } from 'express'
 import { OutgoingHttpHeaders } from 'http'
@@ -12,9 +11,6 @@ import {
   PluginServerApp,
   ResourceProviderRegistry
 } from '@signalk/server-api'
-
-const MIN_ZOOM = 1
-const MAX_ZOOM = 24
 
 interface Config {
   chartPaths: string[]
@@ -38,6 +34,11 @@ interface ChartProviderApp
   }
 }
 
+const MIN_ZOOM = 1
+const MAX_ZOOM = 24
+let basePath: string
+const chartTilesPath = 'chart-tiles'
+
 module.exports = (app: ChartProviderApp): Plugin => {
   let chartProviders: { [key: string]: ChartProvider } = {}
   let pluginStarted = false
@@ -47,7 +48,9 @@ module.exports = (app: ChartProviderApp): Plugin => {
   }
   const configBasePath = app.config.configPath
   const defaultChartsPath = path.join(configBasePath, '/charts')
-  const serverMajorVersion = app.config.version ? parseInt(app.config.version.split('.')[0]) : '1'
+  const serverMajorVersion = app.config.version
+    ? parseInt(app.config.version.split('.')[0])
+    : '1'
   ensureDirectoryExists(defaultChartsPath)
 
   // ******** REQUIRED PLUGIN DEFINITION *******
@@ -99,7 +102,14 @@ module.exports = (app: ChartProviderApp): Plugin => {
               type: 'string',
               title: 'Map source / server type',
               default: 'tilelayer',
-              enum: ['tilelayer', 'S-57', 'WMS', 'WMTS', 'mapstyleJSON', 'tileJSON'],
+              enum: [
+                'tilelayer',
+                'S-57',
+                'WMS',
+                'WMTS',
+                'mapstyleJSON',
+                'tileJSON'
+              ],
               description:
                 'Map data source type served by the supplied url. (Use tilelayer for xyz / tms tile sources.)'
             },
@@ -147,9 +157,8 @@ module.exports = (app: ChartProviderApp): Plugin => {
     name: 'Signal K Charts',
     schema: () => CONFIG_SCHEMA,
     uiSchema: () => CONFIG_UISCHEMA,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    start: (settings: any) => {
-      return doStartup(settings) // return required for tests
+    start: (settings: object) => {
+      return doStartup(settings as Config) // return required for tests
     },
     stop: () => {
       app.setPluginStatus('stopped')
@@ -158,12 +167,28 @@ module.exports = (app: ChartProviderApp): Plugin => {
 
   const doStartup = (config: Config) => {
     app.debug('** loaded config: ', config)
+
+    // Do not register routes if plugin has been started once already
+    pluginStarted === false && registerRoutes()
+    pluginStarted = true
+    basePath = `${app.config.ssl ? 'https' : 'http'}://localhost:${
+      'getExternalPort' in app.config ? app.config.getExternalPort() : 3000
+    }/${chartTilesPath}`
+    app.debug('**basePath**', basePath)
+    app.setPluginStatus('Started')
+
+    return loadCharts(config)
+  }
+
+  // Load chart files
+  const loadCharts = (config: Config) => {
     props = { ...config }
 
     const chartPaths = _.isEmpty(props.chartPaths)
       ? [defaultChartsPath]
       : resolveUniqueChartPaths(props.chartPaths, configBasePath)
 
+    // load from config
     const onlineProviders = _.reduce(
       props.onlineChartProviders,
       (result: { [key: string]: object }, data) => {
@@ -173,20 +198,12 @@ module.exports = (app: ChartProviderApp): Plugin => {
       },
       {}
     )
+
     app.debug(
       `Start charts plugin. Chart paths: ${chartPaths.join(
         ', '
       )}, online charts: ${Object.keys(onlineProviders).length}`
     )
-
-    // Do not register routes if plugin has been started once already
-    pluginStarted === false && registerRoutes()
-    pluginStarted = true
-    const urlBase = `${app.config.ssl ? 'https' : 'http'}://localhost:${
-      'getExternalPort' in app.config ? app.config.getExternalPort() : 3000
-    }`
-    app.debug('**urlBase**', urlBase)
-    app.setPluginStatus('Started')
 
     const loadProviders = bluebird
       .mapSeries(chartPaths, (chartPath: string) => findCharts(chartPath))
@@ -214,7 +231,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
     app.debug('** Registering API paths **')
 
     app.get(
-      `/signalk/:version(v[1-2])/api/resources/charts/:identifier/:z([0-9]*)/:x([0-9]*)/:y([0-9]*)`,
+      `/${chartTilesPath}/:identifier/:z([0-9]*)/:x([0-9]*)/:y([0-9]*)`,
       async (req: Request, res: Response) => {
         const { identifier, z, x, y } = req.params
         const provider = chartProviders[identifier]
@@ -250,7 +267,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
     app.debug('** Registering v1 API paths **')
 
     app.get(
-      apiRoutePrefix[1] + '/charts/:identifier',
+      '/signalk/v1/api/resources/charts/:identifier',
       (req: Request, res: Response) => {
         const { identifier } = req.params
         const provider = chartProviders[identifier]
@@ -262,12 +279,15 @@ module.exports = (app: ChartProviderApp): Plugin => {
       }
     )
 
-    app.get(apiRoutePrefix[1] + '/charts', (req: Request, res: Response) => {
-      const sanitized = _.mapValues(chartProviders, (provider) =>
-        sanitizeProvider(provider)
-      )
-      res.json(sanitized)
-    })
+    app.get(
+      '/signalk/v1/api/resources/charts',
+      (req: Request, res: Response) => {
+        const sanitized = _.mapValues(chartProviders, (provider) =>
+          sanitizeProvider(provider)
+        )
+        res.json(sanitized)
+      }
+    )
 
     // v2 routes
     if (serverMajorVersion === 2) {
@@ -364,10 +384,10 @@ const sanitizeProvider = (provider: ChartProvider, version = 1) => {
   let v
   if (version === 1) {
     v = _.merge({}, provider.v1)
-    v.tilemapUrl = v.tilemapUrl.replace('~basePath~', apiRoutePrefix[1])
-  } else if (version === 2) {
+    v.tilemapUrl = v.tilemapUrl.replace('~basePath~', basePath)
+  } else {
     v = _.merge({}, provider.v2)
-    v.url = v.url ? v.url.replace('~basePath~', apiRoutePrefix[2]) : ''
+    v.url = v.url ? v.url.replace('~basePath~', basePath) : ''
   }
   provider = _.omit(provider, [
     '_filePath',
