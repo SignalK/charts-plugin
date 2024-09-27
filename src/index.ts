@@ -2,7 +2,7 @@ import * as bluebird from 'bluebird'
 import path from 'path'
 import fs from 'fs'
 import * as _ from 'lodash'
-import { findCharts } from './charts'
+import { findCharts, encStyleToId } from './charts'
 import { ChartProvider, OnlineChartProvider } from './types'
 import { Request, Response, Application } from 'express'
 import { OutgoingHttpHeaders } from 'http'
@@ -38,6 +38,7 @@ const MIN_ZOOM = 1
 const MAX_ZOOM = 24
 let basePath: string
 const chartTilesPath = 'chart-tiles'
+const chartStylesPath = 'chart-styles'
 
 module.exports = (app: ChartProviderApp): Plugin => {
   let chartProviders: { [key: string]: ChartProvider } = {}
@@ -173,7 +174,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
     pluginStarted = true
     basePath = `${app.config.ssl ? 'https' : 'http'}://localhost:${
       'getExternalPort' in app.config ? app.config.getExternalPort() : 3000
-    }/${chartTilesPath}`
+    }`
     app.debug('**basePath**', basePath)
     app.setPluginStatus('Started')
 
@@ -230,6 +231,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
   const registerRoutes = () => {
     app.debug('** Registering API paths **')
 
+    app.debug(`** Registering map tile path (${chartTilesPath} **`)
     app.get(
       `/${chartTilesPath}/:identifier/:z([0-9]*)/:x([0-9]*)/:y([0-9]*)`,
       async (req: Request, res: Response) => {
@@ -261,6 +263,23 @@ module.exports = (app: ChartProviderApp): Plugin => {
             )
             res.status(500).send()
         }
+      }
+    )
+
+    app.debug(`** Registering MapBox styles path (${chartStylesPath} **`)
+    app.get(
+      `/${chartStylesPath}/:style`,
+      async (req: Request, res: Response) => {
+        const { style } = req.params
+        const identifier = encStyleToId(style)
+        const provider = chartProviders[identifier]
+        res.sendFile(provider._filePath)
+        /*res.json({ 
+        path: req.path,
+        style,
+        identifier,
+        file: provider._filePath
+      })*/
       }
     )
 
@@ -384,10 +403,20 @@ const sanitizeProvider = (provider: ChartProvider, version = 1) => {
   let v
   if (version === 1) {
     v = _.merge({}, provider.v1)
-    v.tilemapUrl = v.tilemapUrl.replace('~basePath~', basePath)
+    v.tilemapUrl = v.tilemapUrl
+      ? v.tilemapUrl
+          .replace('~basePath~', basePath)
+          .replace('~stylePath~', chartStylesPath)
+          .replace('~tilePath~', chartTilesPath)
+      : ''
   } else {
     v = _.merge({}, provider.v2)
-    v.url = v.url ? v.url.replace('~basePath~', basePath) : ''
+    v.url = v.url
+      ? v.url
+          .replace('~basePath~', basePath)
+          .replace('~stylePath~', chartStylesPath)
+          .replace('~tilePath~', chartTilesPath)
+      : ''
   }
   provider = _.omit(provider, [
     '_filePath',

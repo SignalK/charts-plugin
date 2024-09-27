@@ -19,11 +19,11 @@ export interface ChartProvider {
   scale: number
   v1?: {
     tilemapUrl: string
-    chartLayers: string[]
+    chartLayers?: string[]
   }
   v2?: {
     url: string
-    layers: string[]
+    layers?: string[]
   }
   bounds?: number[]
   minzoom?: number
