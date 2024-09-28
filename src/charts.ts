@@ -166,11 +166,11 @@ function directoryToMapInfo(file: string, identifier: string) {
         ;(info._fileFormat = 'directory'),
           (info._filePath = file),
           (info.v1 = {
-            tilemapUrl: `~basePath~/${identifier}/{z}/{x}/{y}`,
+            tilemapUrl: `~basePath~/~tilePath~/${identifier}/{z}/{x}/{y}`,
             chartLayers: []
           })
         info.v2 = {
-          url: `~basePath~/${identifier}/{z}/{x}/{y}`,
+          url: `~basePath~/~tilePath~/${identifier}/{z}/{x}/{y}`,
           layers: []
         }
 

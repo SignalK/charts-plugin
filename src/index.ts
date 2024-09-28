@@ -39,14 +39,11 @@ const MAX_ZOOM = 24
 let basePath: string
 const chartTilesPath = 'chart-tiles'
 const chartStylesPath = 'chart-styles'
+let chartPaths: Array<string>
+let onlineProviders = {}
 
 module.exports = (app: ChartProviderApp): Plugin => {
   let chartProviders: { [key: string]: ChartProvider } = {}
-  let pluginStarted = false
-  let props: Config = {
-    chartPaths: [],
-    onlineChartProviders: []
-  }
   const configBasePath = app.config.configPath
   const defaultChartsPath = path.join(configBasePath, '/charts')
   const serverMajorVersion = app.config.version
@@ -158,8 +155,8 @@ module.exports = (app: ChartProviderApp): Plugin => {
     name: 'Signal K Charts',
     schema: () => CONFIG_SCHEMA,
     uiSchema: () => CONFIG_UISCHEMA,
-    start: (settings: object) => {
-      return doStartup(settings as Config) // return required for tests
+    start: (config: object) => {
+      return doStartup(config as Config) // return required for tests
     },
     stop: () => {
       app.setPluginStatus('stopped')
@@ -169,29 +166,19 @@ module.exports = (app: ChartProviderApp): Plugin => {
   const doStartup = (config: Config) => {
     app.debug('** loaded config: ', config)
 
-    // Do not register routes if plugin has been started once already
-    pluginStarted === false && registerRoutes()
-    pluginStarted = true
+    registerRoutes()
     basePath = `${app.config.ssl ? 'https' : 'http'}://localhost:${
       'getExternalPort' in app.config ? app.config.getExternalPort() : 3000
     }`
     app.debug('**basePath**', basePath)
     app.setPluginStatus('Started')
 
-    return loadCharts(config)
-  }
-
-  // Load chart files
-  const loadCharts = (config: Config) => {
-    props = { ...config }
-
-    const chartPaths = _.isEmpty(props.chartPaths)
+    chartPaths = _.isEmpty(config.chartPaths)
       ? [defaultChartsPath]
-      : resolveUniqueChartPaths(props.chartPaths, configBasePath)
+      : resolveUniqueChartPaths(config.chartPaths, configBasePath)
 
-    // load from config
-    const onlineProviders = _.reduce(
-      props.onlineChartProviders,
+    onlineProviders = _.reduce(
+      config.onlineChartProviders,
       (result: { [key: string]: object }, data) => {
         const provider = convertOnlineProviderConfig(data)
         result[provider.identifier] = provider
@@ -205,6 +192,13 @@ module.exports = (app: ChartProviderApp): Plugin => {
         ', '
       )}, online charts: ${Object.keys(onlineProviders).length}`
     )
+
+    return loadCharts()
+  }
+
+  // Load chart files
+  const loadCharts = () => {
+    app.debug(`Loading Charts....`)
 
     const loadProviders = bluebird
       .mapSeries(chartPaths, (chartPath: string) => findCharts(chartPath))
