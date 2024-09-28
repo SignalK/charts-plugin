@@ -15,6 +15,7 @@ import {
 interface Config {
   chartPaths: string[]
   onlineChartProviders: OnlineChartProvider[]
+  accessToken: string
 }
 
 interface ChartProviderApp
@@ -41,6 +42,7 @@ const chartTilesPath = 'chart-tiles'
 const chartStylesPath = 'chart-styles'
 let chartPaths: Array<string>
 let onlineProviders = {}
+let accessTokenGlobal = ''
 
 module.exports = (app: ChartProviderApp): Plugin => {
   let chartProviders: { [key: string]: ChartProvider } = {}
@@ -56,6 +58,11 @@ module.exports = (app: ChartProviderApp): Plugin => {
     title: 'Signal K Charts',
     type: 'object',
     properties: {
+      accessToken: {
+        type: 'string',
+        title: 'MapBox Access Token (optional)',
+        description: `Token to append to mapbox style urls for authentication. e.g. "?access_token=xxxxx"`
+      },
       chartPaths: {
         type: 'array',
         title: 'Chart paths',
@@ -173,6 +180,8 @@ module.exports = (app: ChartProviderApp): Plugin => {
     app.debug('**basePath**', basePath)
     app.setPluginStatus('Started')
 
+    accessTokenGlobal = config.accessToken ?? ''
+
     chartPaths = _.isEmpty(config.chartPaths)
       ? [defaultChartsPath]
       : resolveUniqueChartPaths(config.chartPaths, configBasePath)
@@ -268,12 +277,6 @@ module.exports = (app: ChartProviderApp): Plugin => {
         const identifier = encStyleToId(style)
         const provider = chartProviders[identifier]
         res.sendFile(provider._filePath)
-        /*res.json({ 
-        path: req.path,
-        style,
-        identifier,
-        file: provider._filePath
-      })*/
       }
     )
 
@@ -393,20 +396,30 @@ const convertOnlineProviderConfig = (provider: OnlineChartProvider) => {
   return data
 }
 
+const applyAccessToken = (uri: string) => {
+  if (uri.includes('access_token') || !uri.includes('~stylePath~')) {
+    return uri
+  } else {
+    return `${uri}?access_token=${accessTokenGlobal}`
+  }
+}
+
 const sanitizeProvider = (provider: ChartProvider, version = 1) => {
   let v
   if (version === 1) {
     v = _.merge({}, provider.v1)
-    v.tilemapUrl = v.tilemapUrl
-      ? v.tilemapUrl
+    const uri = applyAccessToken(v?.tilemapUrl)
+    v.tilemapUrl = uri
+      ? uri
           .replace('~basePath~', basePath)
           .replace('~stylePath~', chartStylesPath)
           .replace('~tilePath~', chartTilesPath)
       : ''
   } else {
     v = _.merge({}, provider.v2)
-    v.url = v.url
-      ? v.url
+    const uri = applyAccessToken(v?.url)
+    v.url = uri
+      ? uri
           .replace('~basePath~', basePath)
           .replace('~stylePath~', chartStylesPath)
           .replace('~tilePath~', chartTilesPath)
