@@ -37,7 +37,7 @@ interface ChartProviderApp
 
 const MIN_ZOOM = 1
 const MAX_ZOOM = 24
-let basePath: string
+const basePath = ''
 const chartTilesPath = 'chart-tiles'
 const chartStylesPath = 'chart-styles'
 let chartPaths: Array<string>
@@ -174,10 +174,6 @@ module.exports = (app: ChartProviderApp): Plugin => {
     app.debug('** loaded config: ', config)
 
     registerRoutes()
-    basePath = `${app.config.ssl ? 'https' : 'http'}://localhost:${
-      'getExternalPort' in app.config ? app.config.getExternalPort() : 3000
-    }`
-    app.debug('**basePath**', basePath)
     app.setPluginStatus('Started')
 
     accessTokenGlobal = config.accessToken ?? ''
