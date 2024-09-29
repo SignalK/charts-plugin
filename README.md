@@ -2,7 +2,14 @@
 
 Signal K Node server plugin to provide chart metadata, such as name, description and location of the actual chart tile data.
 
-Supports both v1 and v2 Signal K resources api paths.
+Chart metadata is derived from the following supported chart files:
+- Mapbox Tiles _(.mbtiles)_
+- Mapbox Style _(.json)_
+- TMS _(tilemapresource.xml and tiles)_
+
+Additionally chart metadata can be defined for other chart sources and types _(e.g. WMS, WMTS, S-57 tiles and tileJSON)_.
+
+Chart metadata made available to both v1 and v2 Signal K resources api paths.
 
 | Server Version | API | Path |
 |--- |--- |--- |
