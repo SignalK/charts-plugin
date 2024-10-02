@@ -8,6 +8,8 @@
 
 - **Updated**: Moved  the map tile url path to be out from under `resources/charts` to `/chart-tiles`. This better aligns with v2 multiple-provider support.
 
+- **Updated**: Updated package dependencies (#35)
+
 ---
 
 ### 3.0.0
