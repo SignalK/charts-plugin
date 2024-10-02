@@ -1,6 +1,6 @@
 import * as bluebird from 'bluebird'
 import path from 'path'
-import fs from 'fs'
+import fs, { FSWatcher } from 'fs'
 import * as _ from 'lodash'
 import { findCharts, encStyleToId } from './charts'
 import { ChartProvider, OnlineChartProvider } from './types'
@@ -43,6 +43,8 @@ const chartStylesPath = 'chart-styles'
 let chartPaths: Array<string>
 let onlineProviders = {}
 let accessTokenGlobal = ''
+let lastWatchEvent: number | undefined
+const watchers: Array<FSWatcher> = []
 
 module.exports = (app: ChartProviderApp): Plugin => {
   let chartProviders: { [key: string]: ChartProvider } = {}
@@ -166,6 +168,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
       return doStartup(config as Config) // return required for tests
     },
     stop: () => {
+      watchers.forEach((w) => w.close())
       app.setPluginStatus('stopped')
     }
   }
@@ -191,6 +194,15 @@ module.exports = (app: ChartProviderApp): Plugin => {
       },
       {}
     )
+
+    chartPaths.forEach((p) => {
+      console.log('watching..', p)
+      watchers.push(
+        fs.watch(p, 'utf8', (eventType, filename) =>
+          handleWatchEvent(eventType, filename)
+        )
+      )
+    })
 
     app.debug(
       `Start charts plugin. Chart paths: ${chartPaths.join(
@@ -227,6 +239,21 @@ module.exports = (app: ChartProviderApp): Plugin => {
       })
   }
 
+  const refreshProviders = async () => {
+    const td = Date.now() - (lastWatchEvent as number)
+    app.debug(`last watch event time elapsed = ${td}`)
+    if (lastWatchEvent && td > 10000) {
+      app.debug(`reloading Charts`)
+      lastWatchEvent = undefined
+      loadCharts()
+    }
+  }
+
+  const handleWatchEvent = (eventType: string, filename: string) => {
+    console.log('***', eventType, filename)
+    lastWatchEvent = Date.now()
+  }
+
   const registerRoutes = () => {
     app.debug('** Registering API paths **')
 
@@ -235,10 +262,12 @@ module.exports = (app: ChartProviderApp): Plugin => {
       `/${chartTilesPath}/:identifier/:z([0-9]*)/:x([0-9]*)/:y([0-9]*)`,
       async (req: Request, res: Response) => {
         const { identifier, z, x, y } = req.params
+        await refreshProviders()
         const provider = chartProviders[identifier]
         if (!provider) {
           return res.sendStatus(404)
         }
+
         switch (provider._fileFormat) {
           case 'directory':
             return serveTileFromFilesystem(
@@ -271,6 +300,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
       async (req: Request, res: Response) => {
         const { style } = req.params
         const identifier = encStyleToId(style)
+        await refreshProviders()
         const provider = chartProviders[identifier]
         res.sendFile(provider._filePath)
       }
@@ -280,8 +310,9 @@ module.exports = (app: ChartProviderApp): Plugin => {
 
     app.get(
       '/signalk/v1/api/resources/charts/:identifier',
-      (req: Request, res: Response) => {
+      async (req: Request, res: Response) => {
         const { identifier } = req.params
+        await refreshProviders()
         const provider = chartProviders[identifier]
         if (provider) {
           return res.json(sanitizeProvider(provider))
@@ -293,7 +324,8 @@ module.exports = (app: ChartProviderApp): Plugin => {
 
     app.get(
       '/signalk/v1/api/resources/charts',
-      (req: Request, res: Response) => {
+      async (req: Request, res: Response) => {
+        await refreshProviders()
         const sanitized = _.mapValues(chartProviders, (provider) =>
           sanitizeProvider(provider)
         )
@@ -315,18 +347,20 @@ module.exports = (app: ChartProviderApp): Plugin => {
       app.registerResourceProvider({
         type: 'charts',
         methods: {
-          listResources: (params: {
+          listResources: async (params: {
             [key: string]: number | string | object | null
           }) => {
             app.debug(`** listResources()`, params)
+            await refreshProviders()
             return Promise.resolve(
               _.mapValues(chartProviders, (provider) =>
                 sanitizeProvider(provider, 2)
               )
             )
           },
-          getResource: (id: string) => {
+          getResource: async (id: string) => {
             app.debug(`** getResource()`, id)
+            await refreshProviders()
             const provider = chartProviders[id]
             if (provider) {
               return Promise.resolve(sanitizeProvider(provider, 2))

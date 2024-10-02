@@ -4,6 +4,8 @@
 
 - **Added**: Detection, processing and serving of mapbox style json files. Files served from `/chart-styles` 
 
+- **Added**: Watch chart folders for changes and refresh chart providers (#28) 
+
 - **Updated**: Moved  the map tile url path to be out from under `resources/charts` to `/chart-tiles`. This better aligns with v2 multiple-provider support.
 
 ---
