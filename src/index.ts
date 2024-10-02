@@ -197,11 +197,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
 
     chartPaths.forEach((p) => {
       console.log('watching..', p)
-      watchers.push(
-        fs.watch(p, 'utf8', (eventType, filename) =>
-          handleWatchEvent(eventType, filename)
-        )
-      )
+      watchers.push(fs.watch(p, 'utf8', () => handleWatchEvent()))
     })
 
     app.debug(
@@ -249,8 +245,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
     }
   }
 
-  const handleWatchEvent = (eventType: string, filename: string) => {
-    console.log('***', eventType, filename)
+  const handleWatchEvent = () => {
     lastWatchEvent = Date.now()
   }
 
