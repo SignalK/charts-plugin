@@ -120,7 +120,10 @@ describe('GET /chart-tiles/:identifier/:z/:x/:y', () => {
       testServer = server
     })
   )
-  afterEach(done => testServer.close(() => done()))
+  afterEach(done => {
+    plugin.stop()
+    testServer.close(() => done())
+  })
 
   it('returns correct tile from MBTiles file', () => {
     return plugin.start({})
