@@ -173,7 +173,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
     }
   }
 
-  const doStartup = (config: Config) => {
+  const doStartup = async (config: Config) => {
     app.debug('** loaded config: ', config)
 
     registerRoutes()
@@ -196,7 +196,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
     )
 
     chartPaths.forEach((p) => {
-      console.log('watching..', p)
+      app.debug('watching folder..', p)
       watchers.push(fs.watch(p, 'utf8', () => handleWatchEvent()))
     })
 
@@ -210,38 +210,39 @@ module.exports = (app: ChartProviderApp): Plugin => {
   }
 
   // Load chart files
-  const loadCharts = () => {
+  const loadCharts = async () => {
     app.debug(`Loading Charts....`)
 
-    const loadProviders = bluebird
-      .mapSeries(chartPaths, (chartPath: string) => findCharts(chartPath))
-      .then((list: ChartProvider[]) =>
-        _.reduce(list, (result, charts) => _.merge({}, result, charts), {})
+    try {
+      const plist = await bluebird.mapSeries(chartPaths, (chartPath: string) =>
+        findCharts(chartPath)
       )
-
-    return loadProviders
-      .then((charts: { [key: string]: ChartProvider }) => {
-        app.debug(
-          `Chart plugin: Found ${
-            _.keys(charts).length
-          } charts from ${chartPaths.join(', ')}.`
-        )
-        chartProviders = _.merge({}, charts, onlineProviders)
-      })
-      .catch((e: Error) => {
-        console.error(`Error loading chart providers`, e.message)
-        chartProviders = {}
-        app.setPluginError(`Error loading chart providers`)
-      })
+      const charts = _.reduce(
+        plist,
+        (result, charts) => _.merge({}, result, charts),
+        {}
+      )
+      app.debug(
+        `Chart plugin: Found ${
+          _.keys(charts).length
+        } charts from ${chartPaths.join(', ')}.`
+      )
+      chartProviders = _.merge({}, charts, onlineProviders)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } catch (e: any) {
+      console.error(`Error loading chart providers`, e.message)
+      chartProviders = {}
+      app.setPluginError(`Error loading chart providers`)
+    }
   }
 
   const refreshProviders = async () => {
     const td = Date.now() - (lastWatchEvent as number)
     app.debug(`last watch event time elapsed = ${td}`)
-    if (lastWatchEvent && td > 10000) {
-      app.debug(`reloading Charts`)
+    if (lastWatchEvent && td > 5000) {
+      app.debug(`Reloading Charts...`)
       lastWatchEvent = undefined
-      loadCharts()
+      await loadCharts()
     }
   }
 
