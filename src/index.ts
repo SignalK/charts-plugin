@@ -114,8 +114,8 @@ module.exports = (app: ChartProviderApp): Plugin => {
                 'S-57',
                 'WMS',
                 'WMTS',
-                'mapstyleJSON',
-                'tileJSON'
+                'mapboxstyle',
+                'tilejson'
               ],
               description:
                 'Map data source type served by the supplied url. (Use tilelayer for xyz / tms tile sources.)'

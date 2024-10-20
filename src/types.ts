@@ -3,8 +3,8 @@ type MapSourceType =
   | 'S-57'
   | 'WMS'
   | 'WMTS'
-  | 'mapstyleJSON'
-  | 'tileJSON'
+  | 'mapboxstyle'
+  | 'tilejson'
 
 export interface ChartProvider {
   _fileFormat?: 'mbtiles' | 'directory'

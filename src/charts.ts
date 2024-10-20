@@ -120,7 +120,7 @@ async function openMbstylesFile(file: string, filename: string) {
     minzoom: undefined,
     maxzoom: undefined,
     format: undefined,
-    type: 'mapstyleJSON',
+    type: 'mapboxstyle',
     scale: 250000,
     _filePath: file,
     v1: {
