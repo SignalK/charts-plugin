@@ -4,9 +4,11 @@
 
 - **Added**: Detection, processing and serving of mapbox style json files. Files served from `/chart-styles` 
 
+- **Added**: Ability to provide a Mapbox access token in the plugin configuration. 
+
 - **Added**: Watch chart folders for changes and refresh chart providers (#28) 
 
-- **Updated**: Moved  the map tile url path to be out from under `resources/charts` to `/chart-tiles`. This better aligns with v2 multiple-provider support.
+- **Updated**: Move the serving of map tiles out from under `resources/charts` to `/chart-tiles` to better aligns with v2 multiple-provider support.
 
 - **Updated**: Updated package dependencies (#35)
 
