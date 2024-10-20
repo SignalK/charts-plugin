@@ -4,10 +4,10 @@ Signal K Node server plugin to provide chart metadata, such as name, description
 
 Chart metadata is derived from the following supported chart files:
 - Mapbox Tiles _(.mbtiles)_
-- Mapbox Style _(.json)_
+- Mapbox Styles _(.json)_
 - TMS _(tilemapresource.xml and tiles)_
 
-Additionally chart metadata can be defined for other chart sources and types _(e.g. WMS, WMTS, S-57 tiles and tileJSON)_.
+Additionally chart metadata can be defined for other chart sources and types _(e.g. WMS, WMTS, S-57 tiles and tilejson)_.
 
 Chart metadata made available to both v1 and v2 Signal K resources api paths.
 
@@ -39,7 +39,10 @@ _Note: v2 resource paths will only be made available on Signal K server >= v2._
 
 <img src="https://user-images.githubusercontent.com/1435910/45048136-c65d2e80-b083-11e8-99db-01e8cece9f89.png" alt="Online chart providers configuration" width="450"/>
 
+6. (Optional): Add Mapbox access token. 
+     When provided, the access token will added to the url of Mapbox Styles _e.g. `?access_token=xyz123`_ 
 
+     ![image](https://github.com/user-attachments/assets/b4d4d048-2ab1-4bf1-896b-2ca0031ec77f)
 
 
 _WMS example:_
@@ -53,8 +56,10 @@ _WMS example:_
 - [Tuktuk Chart Plotter](https://www.npmjs.com/package/tuktuk-chart-plotter)
 
 ### Supported chart formats
+pk.eyJ1IjoiYWRhbTIyMjIiLCJhIjoiY2l5dGJhaW96MDAwcDJ3bzM0MXk2aTB0bSJ9.kgHNRDiGEmq12toljp2-kA
 
 - [MBTiles](https://github.com/mapbox/mbtiles-spec) file
+- [Mapbox Style](https://docs.mapbox.com/help/glossary/style/) JSON file _e.g. `bright-v9.json`_
 - Directory with cached [TMS](https://wiki.osgeo.org/wiki/Tile_Map_Service_Specification) tiles and `tilemapresource.xml`
 - Directory with XYZ tiles and `metadata.json`
 - Online [TMS](https://wiki.osgeo.org/wiki/Tile_Map_Service_Specification)
@@ -68,9 +73,46 @@ Publicly available MBTiles charts can be found from:
 
 Plugin adds support for `/resources/charts` endpoints described in [Signal K specification](http://signalk.org/specification/1.0.0/doc/otherBranches.html#resourcescharts):
 
-- `GET /signalk/v1/api/resources/charts/` returns metadata for all available charts
-- `GET /signalk/v1/api/resources/charts/${identifier}/` returns metadata for selected chart
-- `GET /signalk/v1/api/resources/charts/${identifier}/${z}/${x}/${y}` returns a single tile for selected offline chart. As charts-plugin isn't proxy, online charts is not available via this request. You should look the metadata to find proper request.
+- Return metadata for all available charts
+
+```bash
+# v1 API
+GET /signalk/v1/api/resources/charts/` 
+
+# v2 API
+GET /signalk/v2/api/resources/charts/` 
+```
+
+- Return metadata for selected chart
+
+```bash
+# v1 API
+GET /signalk/v1/api/resources/charts/${identifier}` 
+
+# v2 API
+GET /signalk/v2/api/resources/charts/${identifier}` 
+```
+
+#### Chart Tiles
+Chart tiles are retrieved using the url defined in the chart metadata.
+
+For chart files placed in the path(s) defined in the plugin configuration, the url will be:
+
+```bash
+/chart-tiles/${identifier}/${z}/${x}/${y}
+```
+
+#### Mapbox Styles
+
+For Mapbox Styles JSON files the url returned in the metadata will be:
+
+```bash
+/chart-styles/${mapboxstyle.json}
+
+# when access token is defined
+/chart-styles/${mapboxstyle.json}?access_token=${token}
+```
+
 
 License
 -------
