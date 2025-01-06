@@ -3,7 +3,7 @@
 Signal K Node server plugin to provide chart metadata, such as name, description and location of the actual chart tile data.
 
 Chart metadata is derived from the following supported chart files:
-- Mapbox Tiles _(.mbtiles)_
+- MBTiles _(.mbtiles)_
 - Mapbox Styles _(.json)_
 - TMS _(tilemapresource.xml and tiles)_
 
@@ -99,7 +99,7 @@ Chart tiles are retrieved using the url defined in the chart metadata.
 For chart files placed in the path(s) defined in the plugin configuration, the url will be:
 
 ```bash
-/chart-tiles/${identifier}/${z}/${x}/${y}
+/signalk/chart-tiles/${identifier}/${z}/${x}/${y}
 ```
 
 #### Mapbox Styles
@@ -107,10 +107,10 @@ For chart files placed in the path(s) defined in the plugin configuration, the u
 For Mapbox Styles JSON files the url returned in the metadata will be:
 
 ```bash
-/chart-styles/${mapboxstyle.json}
+/signalk/chart-styles/${mapboxstyle.json}
 
 # when access token is defined
-/chart-styles/${mapboxstyle.json}?access_token=${token}
+/signalk/chart-styles/${mapboxstyle.json}?access_token=${token}
 ```
 
 

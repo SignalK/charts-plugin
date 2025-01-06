@@ -38,8 +38,8 @@ interface ChartProviderApp
 const MIN_ZOOM = 1
 const MAX_ZOOM = 24
 const basePath = ''
-const chartTilesPath = 'chart-tiles'
-const chartStylesPath = 'chart-styles'
+const chartTilesPath = 'signalk/chart-tiles'
+const chartStylesPath = 'signalk/chart-styles'
 let chartPaths: Array<string>
 let onlineProviders = {}
 let accessTokenGlobal = ''
@@ -47,7 +47,7 @@ let lastWatchEvent: number | undefined
 const watchers: Array<FSWatcher> = []
 
 module.exports = (app: ChartProviderApp): Plugin => {
-  let chartProviders: { [key: string]: ChartProvider } = {}
+  let _chartProviders: { [key: string]: ChartProvider } = {}
   const configBasePath = app.config.configPath
   const defaultChartsPath = path.join(configBasePath, '/charts')
   const serverMajorVersion = app.config.version
@@ -227,11 +227,11 @@ module.exports = (app: ChartProviderApp): Plugin => {
           _.keys(charts).length
         } charts from ${chartPaths.join(', ')}.`
       )
-      chartProviders = _.merge({}, charts, onlineProviders)
+      _chartProviders = _.merge({}, charts, onlineProviders)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (e: any) {
       console.error(`Error loading chart providers`, e.message)
-      chartProviders = {}
+      _chartProviders = {}
       app.setPluginError(`Error loading chart providers`)
     }
   }
@@ -246,6 +246,13 @@ module.exports = (app: ChartProviderApp): Plugin => {
     }
   }
 
+  const getChartProviders = async (): Promise<{
+    [id: string]: ChartProvider
+  }> => {
+    await refreshProviders()
+    return _chartProviders
+  }
+
   const handleWatchEvent = () => {
     lastWatchEvent = Date.now()
   }
@@ -258,17 +265,16 @@ module.exports = (app: ChartProviderApp): Plugin => {
       `/${chartTilesPath}/:identifier/:z([0-9]*)/:x([0-9]*)/:y([0-9]*)`,
       async (req: Request, res: Response) => {
         const { identifier, z, x, y } = req.params
-        await refreshProviders()
-        const provider = chartProviders[identifier]
-        if (!provider) {
+        const providers = await getChartProviders()
+        if (!providers[identifier]) {
           return res.sendStatus(404)
         }
 
-        switch (provider._fileFormat) {
+        switch (providers[identifier]._fileFormat) {
           case 'directory':
             return serveTileFromFilesystem(
               res,
-              provider,
+              providers[identifier],
               parseInt(z),
               parseInt(x),
               parseInt(y)
@@ -276,14 +282,14 @@ module.exports = (app: ChartProviderApp): Plugin => {
           case 'mbtiles':
             return serveTileFromMbtiles(
               res,
-              provider,
+              providers[identifier],
               parseInt(z),
               parseInt(x),
               parseInt(y)
             )
           default:
             console.log(
-              `Unknown chart provider fileformat ${provider._fileFormat}`
+              `Unknown chart provider fileformat ${providers[identifier]._fileFormat}`
             )
             res.status(500).send()
         }
@@ -296,9 +302,8 @@ module.exports = (app: ChartProviderApp): Plugin => {
       async (req: Request, res: Response) => {
         const { style } = req.params
         const identifier = encStyleToId(style)
-        await refreshProviders()
-        const provider = chartProviders[identifier]
-        res.sendFile(provider._filePath)
+        const providers = await getChartProviders()
+        res.sendFile(providers[identifier]._filePath)
       }
     )
 
@@ -308,10 +313,9 @@ module.exports = (app: ChartProviderApp): Plugin => {
       '/signalk/v1/api/resources/charts/:identifier',
       async (req: Request, res: Response) => {
         const { identifier } = req.params
-        await refreshProviders()
-        const provider = chartProviders[identifier]
-        if (provider) {
-          return res.json(sanitizeProvider(provider))
+        const providers = await getChartProviders()
+        if (providers[identifier]) {
+          return res.json(sanitizeProvider(providers[identifier]))
         } else {
           return res.status(404).send('Not found')
         }
@@ -321,8 +325,8 @@ module.exports = (app: ChartProviderApp): Plugin => {
     app.get(
       '/signalk/v1/api/resources/charts',
       async (req: Request, res: Response) => {
-        await refreshProviders()
-        const sanitized = _.mapValues(chartProviders, (provider) =>
+        const providers = await getChartProviders()
+        const sanitized = _.mapValues(providers, (provider) =>
           sanitizeProvider(provider)
         )
         res.json(sanitized)
@@ -347,19 +351,18 @@ module.exports = (app: ChartProviderApp): Plugin => {
             [key: string]: number | string | object | null
           }) => {
             app.debug(`** listResources()`, params)
-            await refreshProviders()
+            const providers = await getChartProviders()
             return Promise.resolve(
-              _.mapValues(chartProviders, (provider) =>
+              _.mapValues(providers, (provider) =>
                 sanitizeProvider(provider, 2)
               )
             )
           },
           getResource: async (id: string) => {
             app.debug(`** getResource()`, id)
-            await refreshProviders()
-            const provider = chartProviders[id]
-            if (provider) {
-              return Promise.resolve(sanitizeProvider(provider, 2))
+            const providers = await getChartProviders()
+            if (providers[id]) {
+              return Promise.resolve(sanitizeProvider(providers[id], 2))
             } else {
               throw new Error('Chart not found!')
             }

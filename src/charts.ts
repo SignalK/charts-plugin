@@ -20,7 +20,7 @@ export function findCharts(chartBaseDir: string) {
         } else if (isDirectory) {
           return directoryToMapInfo(filePath, file.name)
         } else if (isMbstylesFile) {
-          return openMbstylesFile(filePath, file.name)
+          return openMapboxStylesFile(filePath, file.name)
         } else {
           return Promise.resolve(null)
         }
@@ -108,7 +108,7 @@ export function encStyleToId(filename: string) {
   return filename.replace('.json', '').replaceAll(' ', '-').toLocaleLowerCase()
 }
 
-async function openMbstylesFile(file: string, filename: string) {
+async function openMapboxStylesFile(file: string, filename: string) {
   const json = JSON.parse(await fs.readFile(file, 'utf8'))
   const identifier = encStyleToId(filename)
   return {
