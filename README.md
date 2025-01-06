@@ -2,14 +2,14 @@
 
 Signal K Node server plugin to provide chart metadata, such as name, description and location of the actual chart tile data.
 
-Chart metadata is derived from the following supported chart files:
+Chart metadata is derived from the following supported chart file types:
 - MBTiles _(.mbtiles)_
 - Mapbox Styles _(.json)_
 - TMS _(tilemapresource.xml and tiles)_
 
-Additionally chart metadata can be defined for other chart sources and types _(e.g. WMS, WMTS, S-57 tiles and tilejson)_.
+Additionally, chart metadata can be entered via the plugin configuration for other chart sources and types _(e.g. WMS, WMTS, S-57 tiles and tilejson)_.
 
-Chart metadata made available to both v1 and v2 Signal K resources api paths.
+Chart metadata is made available to both v1 and v2 Signal K `resources` api paths.
 
 | Server Version | API | Path |
 |--- |--- |--- |
@@ -17,48 +17,64 @@ Chart metadata made available to both v1 and v2 Signal K resources api paths.
 | 2.x.x | v2 | `/signalk/v2/api/resources/charts` |
 
     
-_Note: v2 resource paths will only be made available on Signal K server >= v2._
+_Note: Version 2 resource paths will only be made available on Signal K server v2.0.0 and later_
 
-### Usage
+## Usage
 
-1. Install "Signal K Charts" plugin from Signal K Appstore
+1. Install `@signalk/signalk-charts` from the Signal K Server Appstore
 
-2. Configure plugin in **Plugin Config** 
+2. Configure the plugin in the Admin UI _(**Server -> Plugin Config -> Signal K Charts**)_ 
 
-- Add "Chart paths" which are the paths to the folders where chart files are stored. Defaults to `${signalk-configuration-path}/charts`
+3. Activate the plugin
 
-
-3. Add "Chart paths" in plugin configuration. Defaults to `${signalk-configuration-path}/charts`
-
-<img src="https://user-images.githubusercontent.com/1435910/39382493-57c1e4dc-4a6e-11e8-93e1-cedb4c7662f4.png" alt="Chart paths configuration" width="450"/>
-
-
-4. Put charts into selected paths
-
-5. Add optional online chart providers
-
-<img src="https://user-images.githubusercontent.com/1435910/45048136-c65d2e80-b083-11e8-99db-01e8cece9f89.png" alt="Online chart providers configuration" width="450"/>
-
-6. (Optional): Add Mapbox access token. 
-     When provided, the access token will added to the url of Mapbox Styles _e.g. `?access_token=xyz123`_ 
-
-     ![image](https://github.com/user-attachments/assets/b4d4d048-2ab1-4bf1-896b-2ca0031ec77f)
-
-
-_WMS example:_
-
-<img src="https://user-images.githubusercontent.com/38519157/102832518-90077100-443e-11eb-9a1d-d0806bb2b10b.png" alt="server type configuration" width="450"/>
-
-6. Activate plugin
-
-7. Use one of the client apps supporting Signal K charts, for example:
+Chart metadata will then be available to client apps via the resources api `/resources/charts` for example:
 - [Freeboard SK](https://www.npmjs.com/package/@signalk/freeboard-sk)
 - [Tuktuk Chart Plotter](https://www.npmjs.com/package/tuktuk-chart-plotter)
 
-### Supported chart formats
-pk.eyJ1IjoiYWRhbTIyMjIiLCJhIjoiY2l5dGJhaW96MDAwcDJ3bzM0MXk2aTB0bSJ9.kgHNRDiGEmq12toljp2-kA
 
-- [MBTiles](https://github.com/mapbox/mbtiles-spec) file
+## Configuration
+
+
+### Local Chart Files
+
+If you are using chart files stored on the Signal K Server you will need to add the locations where the chart files are stored so the plugin can generate the chart metadata.
+
+Do this by adding "Chart paths" and providing the path to each folder on the Signal K Server where chart files are stored. _(Defaults to `${signalk-configuration-path}/charts`)_
+
+<img src="https://user-images.githubusercontent.com/1435910/39382493-57c1e4dc-4a6e-11e8-93e1-cedb4c7662f4.png" alt="Chart paths configuration" width="450"/>
+
+When chart files are added to the folder(s) they will be processed by the plugin and the chart metadata will be available.
+
+### Online chart providers
+
+If your chart source is not local to the Signal K Server you can add "Online Chart Providers" and enter the required charts metadata for the source.
+
+You will need to provide the following information:
+1. A chart name for client applications to display
+2. The URL to the chart source
+3. Select the chart image format
+4. The minimum and maximum zoom levels where chart data is available.
+
+You can also provide a description detailing the chart content.
+
+<img src="https://github.com/user-attachments/assets/77cb3aaf-5471-4e55-b05d-aad70cacab6a" alt="Online chart providers configuration" width="450"/>
+
+For WMS & WMTS sources you can specify the layers you wish to display.
+
+<img src="https://github.com/user-attachments/assets/b9bfba38-8468-4eca-aeb3-96a80fcbc7a6" alt="Online chart provider layers" width="450"/>
+
+### Mapbox access token (Optional)
+
+If you are using chart sources that require a Mapbox access token then you can provide your in the space provided. 
+
+![image](https://github.com/user-attachments/assets/b4d4d048-2ab1-4bf1-896b-2ca0031ec77f)
+
+---
+
+
+### Supported chart formats
+
+- [MBTiles](https://github.com/mapbox/mbtiles-spec) files
 - [Mapbox Style](https://docs.mapbox.com/help/glossary/style/) JSON file _e.g. `bright-v9.json`_
 - Directory with cached [TMS](https://wiki.osgeo.org/wiki/Tile_Map_Service_Specification) tiles and `tilemapresource.xml`
 - Directory with XYZ tiles and `metadata.json`
@@ -69,11 +85,13 @@ Publicly available MBTiles charts can be found from:
 - [Finnish Transport Agency nautical charts](https://github.com/vokkim/rannikkokartat-mbtiles)
 - [Signal K World Coastline Map](https://github.com/netAction/signalk-world-coastline-map), download [MBTiles release](https://github.com/netAction/signalk-world-coastline-map/releases/download/v1.0/signalk-world-coastline-map-database.tgz)
 
+---
+
 ### API
 
 Plugin adds support for `/resources/charts` endpoints described in [Signal K specification](http://signalk.org/specification/1.0.0/doc/otherBranches.html#resourcescharts):
 
-- Return metadata for all available charts
+- List available charts
 
 ```bash
 # v1 API
@@ -96,7 +114,7 @@ GET /signalk/v2/api/resources/charts/${identifier}`
 #### Chart Tiles
 Chart tiles are retrieved using the url defined in the chart metadata.
 
-For chart files placed in the path(s) defined in the plugin configuration, the url will be:
+For local chart files located in the Chart Path(s) defined in the plugin configuration, the url will be:
 
 ```bash
 /signalk/chart-tiles/${identifier}/${z}/${x}/${y}
