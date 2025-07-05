@@ -14,13 +14,10 @@ export function findCharts(chartBaseDir: string) {
         const isMbtilesFile = file.name.match(/\.mbtiles$/i)
         const filePath = path.resolve(chartBaseDir, file.name)
         const isDirectory = file.isDirectory()
-        const isMbstylesFile = file.name.match(/\.json$/i)
         if (isMbtilesFile) {
           return openMbtilesFile(filePath, file.name)
         } else if (isDirectory) {
           return directoryToMapInfo(filePath, file.name)
-        } else if (isMbstylesFile) {
-          return openMapboxStylesFile(filePath, file.name)
         } else {
           return Promise.resolve(null)
         }
@@ -83,13 +80,13 @@ function openMbtilesFile(file: string, filename: string) {
           type: 'tilelayer',
           scale: parseInt(res.metadata.scale) || 250000,
           v1: {
-            tilemapUrl: `~basePath~/~tilePath~/${identifier}/{z}/{x}/{y}`,
+            tilemapUrl: `~tilePath~/${identifier}/{z}/{x}/{y}`,
             chartLayers: res.metadata.vector_layers
               ? parseVectorLayers(res.metadata.vector_layers)
               : []
           },
           v2: {
-            url: `~basePath~/~tilePath~/${identifier}/{z}/{x}/{y}`,
+            url: `~tilePath~/${identifier}/{z}/{x}/{y}`,
             layers: res.metadata.vector_layers
               ? parseVectorLayers(res.metadata.vector_layers)
               : []
@@ -102,36 +99,6 @@ function openMbtilesFile(file: string, filename: string) {
         return null
       })
   )
-}
-
-export function encStyleToId(filename: string) {
-  return filename.replace('.json', '').replaceAll(' ', '-').toLocaleLowerCase()
-}
-
-async function openMapboxStylesFile(file: string, filename: string) {
-  const json = JSON.parse(await fs.readFile(file, 'utf8'))
-  const identifier = encStyleToId(filename)
-  return {
-    _flipY: false,
-    name: json.name,
-    description: '',
-    identifier,
-    bounds: undefined,
-    minzoom: undefined,
-    maxzoom: undefined,
-    format: undefined,
-    type: 'mapboxstyle',
-    scale: 250000,
-    _filePath: file,
-    v1: {
-      tilemapUrl: `~basePath~/~stylePath~/${filename}`,
-      chartLayers: undefined
-    },
-    v2: {
-      url: `~basePath~/~stylePath~/${filename}`,
-      layers: undefined
-    }
-  }
 }
 
 function parseVectorLayers(layers: Array<{ id: string }>) {
@@ -166,11 +133,11 @@ function directoryToMapInfo(file: string, identifier: string) {
         ;(info._fileFormat = 'directory'),
           (info._filePath = file),
           (info.v1 = {
-            tilemapUrl: `~basePath~/~tilePath~/${identifier}/{z}/{x}/{y}`,
+            tilemapUrl: `~tilePath~/${identifier}/{z}/{x}/{y}`,
             chartLayers: []
           })
         info.v2 = {
-          url: `~basePath~/~tilePath~/${identifier}/{z}/{x}/{y}`,
+          url: `~tilePath~/${identifier}/{z}/{x}/{y}`,
           layers: []
         }
 

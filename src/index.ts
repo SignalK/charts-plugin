@@ -2,13 +2,13 @@ import * as bluebird from 'bluebird'
 import path from 'path'
 import fs, { FSWatcher } from 'fs'
 import * as _ from 'lodash'
-import { findCharts, encStyleToId } from './charts'
+import { findCharts } from './charts'
 import { ChartProvider, OnlineChartProvider } from './types'
 import { Request, Response, Application } from 'express'
 import { OutgoingHttpHeaders } from 'http'
 import {
   Plugin,
-  PluginServerApp,
+  ServerAPI,
   ResourceProviderRegistry
 } from '@signalk/server-api'
 
@@ -19,14 +19,9 @@ interface Config {
 }
 
 interface ChartProviderApp
-  extends PluginServerApp,
+  extends ServerAPI,
     ResourceProviderRegistry,
     Application {
-  statusMessage?: () => string
-  error: (msg: string) => void
-  debug: (...msg: unknown[]) => void
-  setPluginStatus: (pluginId: string, status?: string) => void
-  setPluginError: (pluginId: string, status?: string) => void
   config: {
     ssl: boolean
     configPath: string
@@ -37,12 +32,9 @@ interface ChartProviderApp
 
 const MIN_ZOOM = 1
 const MAX_ZOOM = 24
-const basePath = ''
-const chartTilesPath = 'signalk/chart-tiles'
-const chartStylesPath = 'signalk/chart-styles'
+const chartTilesPath = '/signalk/chart-tiles'
 let chartPaths: Array<string>
 let onlineProviders = {}
-let accessTokenGlobal = ''
 let lastWatchEvent: number | undefined
 const watchers: Array<FSWatcher> = []
 
@@ -60,11 +52,6 @@ module.exports = (app: ChartProviderApp): Plugin => {
     title: 'Signal K Charts',
     type: 'object',
     properties: {
-      accessToken: {
-        type: 'string',
-        title: 'MapBox Access Token (optional)',
-        description: `Token to append to mapbox style urls for authentication. e.g. "?access_token=xxxxx"`
-      },
       chartPaths: {
         type: 'array',
         title: 'Chart paths',
@@ -174,12 +161,10 @@ module.exports = (app: ChartProviderApp): Plugin => {
   }
 
   const doStartup = async (config: Config) => {
-    app.debug('** loaded config: ', config)
+    app.debug(`** loaded config: ${config}`)
 
     registerRoutes()
     app.setPluginStatus('Started')
-
-    accessTokenGlobal = config.accessToken ?? ''
 
     chartPaths = _.isEmpty(config.chartPaths)
       ? [defaultChartsPath]
@@ -196,7 +181,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
     )
 
     chartPaths.forEach((p) => {
-      app.debug('watching folder..', p)
+      app.debug(`watching folder.. ${p}`)
       watchers.push(fs.watch(p, 'utf8', () => handleWatchEvent()))
     })
 
@@ -262,7 +247,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
 
     app.debug(`** Registering map tile path (${chartTilesPath} **`)
     app.get(
-      `/${chartTilesPath}/:identifier/:z([0-9]*)/:x([0-9]*)/:y([0-9]*)`,
+      `${chartTilesPath}/:identifier/:z([0-9]*)/:x([0-9]*)/:y([0-9]*)`,
       async (req: Request, res: Response) => {
         const { identifier, z, x, y } = req.params
         const providers = await getChartProviders()
@@ -293,17 +278,6 @@ module.exports = (app: ChartProviderApp): Plugin => {
             )
             res.status(500).send()
         }
-      }
-    )
-
-    app.debug(`** Registering MapBox styles path (${chartStylesPath} **`)
-    app.get(
-      `/${chartStylesPath}/:style`,
-      async (req: Request, res: Response) => {
-        const { style } = req.params
-        const identifier = encStyleToId(style)
-        const providers = await getChartProviders()
-        res.sendFile(providers[identifier]._filePath)
       }
     )
 
@@ -350,7 +324,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
           listResources: async (params: {
             [key: string]: number | string | object | null
           }) => {
-            app.debug(`** listResources()`, params)
+            app.debug(`** listResources() ${params}`)
             const providers = await getChartProviders()
             return Promise.resolve(
               _.mapValues(providers, (provider) =>
@@ -359,7 +333,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
             )
           },
           getResource: async (id: string) => {
-            app.debug(`** getResource()`, id)
+            app.debug(`** getResource() ${id}`)
             const providers = await getChartProviders()
             if (providers[id]) {
               return Promise.resolve(sanitizeProvider(providers[id], 2))
@@ -425,34 +399,16 @@ const convertOnlineProviderConfig = (provider: OnlineChartProvider) => {
   return data
 }
 
-const applyAccessToken = (uri: string) => {
-  if (uri.includes('access_token') || !uri.includes('~stylePath~')) {
-    return uri
-  } else {
-    return `${uri}?access_token=${accessTokenGlobal}`
-  }
-}
-
 const sanitizeProvider = (provider: ChartProvider, version = 1) => {
   let v
   if (version === 1) {
     v = _.merge({}, provider.v1)
-    const uri = applyAccessToken(v?.tilemapUrl)
-    v.tilemapUrl = uri
-      ? uri
-          .replace('~basePath~', basePath)
-          .replace('~stylePath~', chartStylesPath)
-          .replace('~tilePath~', chartTilesPath)
+    v.tilemapUrl = v.tilemapUrl
+      ? v.tilemapUrl.replace('~tilePath~', chartTilesPath)
       : ''
   } else {
     v = _.merge({}, provider.v2)
-    const uri = applyAccessToken(v?.url)
-    v.url = uri
-      ? uri
-          .replace('~basePath~', basePath)
-          .replace('~stylePath~', chartStylesPath)
-          .replace('~tilePath~', chartTilesPath)
-      : ''
+    v.url = v.url ? v.url.replace('~tilePath~', chartTilesPath) : ''
   }
   provider = _.omit(provider, [
     '_filePath',

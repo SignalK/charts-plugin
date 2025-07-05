@@ -4,7 +4,6 @@ Signal K Node server plugin to provide chart metadata, such as name, description
 
 Chart metadata is derived from the following supported chart file types:
 - MBTiles _(.mbtiles)_
-- Mapbox Styles _(.json)_
 - TMS _(tilemapresource.xml and tiles)_
 
 Additionally, chart metadata can be entered via the plugin configuration for other chart sources and types _(e.g. WMS, WMTS, S-57 tiles and tilejson)_.
@@ -45,6 +44,7 @@ Do this by adding "Chart paths" and providing the path to each folder on the Sig
 
 When chart files are added to the folder(s) they will be processed by the plugin and the chart metadata will be available.
 
+
 ### Online chart providers
 
 If your chart source is not local to the Signal K Server you can add "Online Chart Providers" and enter the required charts metadata for the source.
@@ -63,19 +63,10 @@ For WMS & WMTS sources you can specify the layers you wish to display.
 
 <img src="https://github.com/user-attachments/assets/b9bfba38-8468-4eca-aeb3-96a80fcbc7a6" alt="Online chart provider layers" width="450"/>
 
-### Mapbox access token (Optional)
-
-If you are using chart sources that require a Mapbox access token then you can provide your in the space provided. 
-
-![image](https://github.com/user-attachments/assets/b4d4d048-2ab1-4bf1-896b-2ca0031ec77f)
-
----
-
 
 ### Supported chart formats
 
 - [MBTiles](https://github.com/mapbox/mbtiles-spec) files
-- [Mapbox Style](https://docs.mapbox.com/help/glossary/style/) JSON file _e.g. `bright-v9.json`_
 - Directory with cached [TMS](https://wiki.osgeo.org/wiki/Tile_Map_Service_Specification) tiles and `tilemapresource.xml`
 - Directory with XYZ tiles and `metadata.json`
 - Online [TMS](https://wiki.osgeo.org/wiki/Tile_Map_Service_Specification)
@@ -84,6 +75,7 @@ Publicly available MBTiles charts can be found from:
 - [NOAA Nautical charts](https://distribution.charts.noaa.gov/ncds/index.html)
 - [Finnish Transport Agency nautical charts](https://github.com/vokkim/rannikkokartat-mbtiles)
 - [Signal K World Coastline Map](https://github.com/netAction/signalk-world-coastline-map), download [MBTiles release](https://github.com/netAction/signalk-world-coastline-map/releases/download/v1.0/signalk-world-coastline-map-database.tgz)
+
 
 ---
 
@@ -119,18 +111,6 @@ For local chart files located in the Chart Path(s) defined in the plugin configu
 ```bash
 /signalk/chart-tiles/${identifier}/${z}/${x}/${y}
 ```
-
-#### Mapbox Styles
-
-For Mapbox Styles JSON files the url returned in the metadata will be:
-
-```bash
-/signalk/chart-styles/${mapboxstyle.json}
-
-# when access token is defined
-/signalk/chart-styles/${mapboxstyle.json}?access_token=${token}
-```
-
 
 License
 -------
