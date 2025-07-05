@@ -1,6 +1,6 @@
 {
     "compilerOptions": {
-      "target": "es6",
+      "target": "ES2022",
       "module": "commonjs",
       "outDir": "./plugin",
       "esModuleInterop": true,
@@ -21,7 +21,7 @@
       "ignoreCompilerErrors": true,
       "excludePrivate": true,
       "excludeNotExported": true,
-      "target": "ES5",
+      "target": "ES2022",
       "moduleResolution": "node",
       "preserveConstEnums": true,
       "stripInternal": true,
