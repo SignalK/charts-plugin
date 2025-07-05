@@ -1,35 +1,27 @@
 import * as bluebird from 'bluebird'
 import path from 'path'
-import fs from 'fs'
+import fs, { FSWatcher } from 'fs'
 import * as _ from 'lodash'
 import { findCharts } from './charts'
-import { apiRoutePrefix } from './constants'
 import { ChartProvider, OnlineChartProvider } from './types'
 import { Request, Response, Application } from 'express'
 import { OutgoingHttpHeaders } from 'http'
 import {
   Plugin,
-  PluginServerApp,
+  ServerAPI,
   ResourceProviderRegistry
 } from '@signalk/server-api'
-
-const MIN_ZOOM = 1
-const MAX_ZOOM = 24
 
 interface Config {
   chartPaths: string[]
   onlineChartProviders: OnlineChartProvider[]
+  accessToken: string
 }
 
 interface ChartProviderApp
-  extends PluginServerApp,
+  extends ServerAPI,
     ResourceProviderRegistry,
     Application {
-  statusMessage?: () => string
-  error: (msg: string) => void
-  debug: (...msg: unknown[]) => void
-  setPluginStatus: (pluginId: string, status?: string) => void
-  setPluginError: (pluginId: string, status?: string) => void
   config: {
     ssl: boolean
     configPath: string
@@ -38,16 +30,21 @@ interface ChartProviderApp
   }
 }
 
+const MIN_ZOOM = 1
+const MAX_ZOOM = 24
+const chartTilesPath = '/signalk/chart-tiles'
+let chartPaths: Array<string>
+let onlineProviders = {}
+let lastWatchEvent: number | undefined
+const watchers: Array<FSWatcher> = []
+
 module.exports = (app: ChartProviderApp): Plugin => {
-  let chartProviders: { [key: string]: ChartProvider } = {}
-  let pluginStarted = false
-  let props: Config = {
-    chartPaths: [],
-    onlineChartProviders: []
-  }
+  let _chartProviders: { [key: string]: ChartProvider } = {}
   const configBasePath = app.config.configPath
   const defaultChartsPath = path.join(configBasePath, '/charts')
-  const serverMajorVersion = app.config.version ? parseInt(app.config.version.split('.')[0]) : '1'
+  const serverMajorVersion = app.config.version
+    ? parseInt(app.config.version.split('.')[0])
+    : '1'
   ensureDirectoryExists(defaultChartsPath)
 
   // ******** REQUIRED PLUGIN DEFINITION *******
@@ -99,7 +96,14 @@ module.exports = (app: ChartProviderApp): Plugin => {
               type: 'string',
               title: 'Map source / server type',
               default: 'tilelayer',
-              enum: ['tilelayer', 'S-57', 'WMS', 'WMTS', 'mapstyleJSON', 'tileJSON'],
+              enum: [
+                'tilelayer',
+                'S-57',
+                'WMS',
+                'WMTS',
+                'mapboxstyle',
+                'tilejson'
+              ],
               description:
                 'Map data source type served by the supplied url. (Use tilelayer for xyz / tms tile sources.)'
             },
@@ -147,25 +151,27 @@ module.exports = (app: ChartProviderApp): Plugin => {
     name: 'Signal K Charts',
     schema: () => CONFIG_SCHEMA,
     uiSchema: () => CONFIG_UISCHEMA,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    start: (settings: any) => {
-      return doStartup(settings) // return required for tests
+    start: (config: object) => {
+      return doStartup(config as Config) // return required for tests
     },
     stop: () => {
+      watchers.forEach((w) => w.close())
       app.setPluginStatus('stopped')
     }
   }
 
-  const doStartup = (config: Config) => {
-    app.debug('** loaded config: ', config)
-    props = { ...config }
+  const doStartup = async (config: Config) => {
+    app.debug(`** loaded config: ${config}`)
 
-    const chartPaths = _.isEmpty(props.chartPaths)
+    registerRoutes()
+    app.setPluginStatus('Started')
+
+    chartPaths = _.isEmpty(config.chartPaths)
       ? [defaultChartsPath]
-      : resolveUniqueChartPaths(props.chartPaths, configBasePath)
+      : resolveUniqueChartPaths(config.chartPaths, configBasePath)
 
-    const onlineProviders = _.reduce(
-      props.onlineChartProviders,
+    onlineProviders = _.reduce(
+      config.onlineChartProviders,
       (result: { [key: string]: object }, data) => {
         const provider = convertOnlineProviderConfig(data)
         result[provider.identifier] = provider
@@ -173,59 +179,87 @@ module.exports = (app: ChartProviderApp): Plugin => {
       },
       {}
     )
+
+    chartPaths.forEach((p) => {
+      app.debug(`watching folder.. ${p}`)
+      watchers.push(fs.watch(p, 'utf8', () => handleWatchEvent()))
+    })
+
     app.debug(
       `Start charts plugin. Chart paths: ${chartPaths.join(
         ', '
       )}, online charts: ${Object.keys(onlineProviders).length}`
     )
 
-    // Do not register routes if plugin has been started once already
-    pluginStarted === false && registerRoutes()
-    pluginStarted = true
-    const urlBase = `${app.config.ssl ? 'https' : 'http'}://localhost:${
-      'getExternalPort' in app.config ? app.config.getExternalPort() : 3000
-    }`
-    app.debug('**urlBase**', urlBase)
-    app.setPluginStatus('Started')
+    return loadCharts()
+  }
 
-    const loadProviders = bluebird
-      .mapSeries(chartPaths, (chartPath: string) => findCharts(chartPath))
-      .then((list: ChartProvider[]) =>
-        _.reduce(list, (result, charts) => _.merge({}, result, charts), {})
+  // Load chart files
+  const loadCharts = async () => {
+    app.debug(`Loading Charts....`)
+
+    try {
+      const plist = await bluebird.mapSeries(chartPaths, (chartPath: string) =>
+        findCharts(chartPath)
       )
+      const charts = _.reduce(
+        plist,
+        (result, charts) => _.merge({}, result, charts),
+        {}
+      )
+      app.debug(
+        `Chart plugin: Found ${
+          _.keys(charts).length
+        } charts from ${chartPaths.join(', ')}.`
+      )
+      _chartProviders = _.merge({}, charts, onlineProviders)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } catch (e: any) {
+      console.error(`Error loading chart providers`, e.message)
+      _chartProviders = {}
+      app.setPluginError(`Error loading chart providers`)
+    }
+  }
 
-    return loadProviders
-      .then((charts: { [key: string]: ChartProvider }) => {
-        app.debug(
-          `Chart plugin: Found ${
-            _.keys(charts).length
-          } charts from ${chartPaths.join(', ')}.`
-        )
-        chartProviders = _.merge({}, charts, onlineProviders)
-      })
-      .catch((e: Error) => {
-        console.error(`Error loading chart providers`, e.message)
-        chartProviders = {}
-        app.setPluginError(`Error loading chart providers`)
-      })
+  const refreshProviders = async () => {
+    const td = Date.now() - (lastWatchEvent as number)
+    app.debug(`last watch event time elapsed = ${td}`)
+    if (lastWatchEvent && td > 5000) {
+      app.debug(`Reloading Charts...`)
+      lastWatchEvent = undefined
+      await loadCharts()
+    }
+  }
+
+  const getChartProviders = async (): Promise<{
+    [id: string]: ChartProvider
+  }> => {
+    await refreshProviders()
+    return _chartProviders
+  }
+
+  const handleWatchEvent = () => {
+    lastWatchEvent = Date.now()
   }
 
   const registerRoutes = () => {
     app.debug('** Registering API paths **')
 
+    app.debug(`** Registering map tile path (${chartTilesPath} **`)
     app.get(
-      `/signalk/:version(v[1-2])/api/resources/charts/:identifier/:z([0-9]*)/:x([0-9]*)/:y([0-9]*)`,
+      `${chartTilesPath}/:identifier/:z([0-9]*)/:x([0-9]*)/:y([0-9]*)`,
       async (req: Request, res: Response) => {
         const { identifier, z, x, y } = req.params
-        const provider = chartProviders[identifier]
-        if (!provider) {
+        const providers = await getChartProviders()
+        if (!providers[identifier]) {
           return res.sendStatus(404)
         }
-        switch (provider._fileFormat) {
+
+        switch (providers[identifier]._fileFormat) {
           case 'directory':
             return serveTileFromFilesystem(
               res,
-              provider,
+              providers[identifier],
               parseInt(z),
               parseInt(x),
               parseInt(y)
@@ -233,14 +267,14 @@ module.exports = (app: ChartProviderApp): Plugin => {
           case 'mbtiles':
             return serveTileFromMbtiles(
               res,
-              provider,
+              providers[identifier],
               parseInt(z),
               parseInt(x),
               parseInt(y)
             )
           default:
             console.log(
-              `Unknown chart provider fileformat ${provider._fileFormat}`
+              `Unknown chart provider fileformat ${providers[identifier]._fileFormat}`
             )
             res.status(500).send()
         }
@@ -250,24 +284,28 @@ module.exports = (app: ChartProviderApp): Plugin => {
     app.debug('** Registering v1 API paths **')
 
     app.get(
-      apiRoutePrefix[1] + '/charts/:identifier',
-      (req: Request, res: Response) => {
+      '/signalk/v1/api/resources/charts/:identifier',
+      async (req: Request, res: Response) => {
         const { identifier } = req.params
-        const provider = chartProviders[identifier]
-        if (provider) {
-          return res.json(sanitizeProvider(provider))
+        const providers = await getChartProviders()
+        if (providers[identifier]) {
+          return res.json(sanitizeProvider(providers[identifier]))
         } else {
           return res.status(404).send('Not found')
         }
       }
     )
 
-    app.get(apiRoutePrefix[1] + '/charts', (req: Request, res: Response) => {
-      const sanitized = _.mapValues(chartProviders, (provider) =>
-        sanitizeProvider(provider)
-      )
-      res.json(sanitized)
-    })
+    app.get(
+      '/signalk/v1/api/resources/charts',
+      async (req: Request, res: Response) => {
+        const providers = await getChartProviders()
+        const sanitized = _.mapValues(providers, (provider) =>
+          sanitizeProvider(provider)
+        )
+        res.json(sanitized)
+      }
+    )
 
     // v2 routes
     if (serverMajorVersion === 2) {
@@ -283,21 +321,22 @@ module.exports = (app: ChartProviderApp): Plugin => {
       app.registerResourceProvider({
         type: 'charts',
         methods: {
-          listResources: (params: {
+          listResources: async (params: {
             [key: string]: number | string | object | null
           }) => {
-            app.debug(`** listResources()`, params)
+            app.debug(`** listResources() ${params}`)
+            const providers = await getChartProviders()
             return Promise.resolve(
-              _.mapValues(chartProviders, (provider) =>
+              _.mapValues(providers, (provider) =>
                 sanitizeProvider(provider, 2)
               )
             )
           },
-          getResource: (id: string) => {
-            app.debug(`** getResource()`, id)
-            const provider = chartProviders[id]
-            if (provider) {
-              return Promise.resolve(sanitizeProvider(provider, 2))
+          getResource: async (id: string) => {
+            app.debug(`** getResource() ${id}`)
+            const providers = await getChartProviders()
+            if (providers[id]) {
+              return Promise.resolve(sanitizeProvider(providers[id], 2))
             } else {
               throw new Error('Chart not found!')
             }
@@ -364,10 +403,12 @@ const sanitizeProvider = (provider: ChartProvider, version = 1) => {
   let v
   if (version === 1) {
     v = _.merge({}, provider.v1)
-    v.tilemapUrl = v.tilemapUrl.replace('~basePath~', apiRoutePrefix[1])
-  } else if (version === 2) {
+    v.tilemapUrl = v.tilemapUrl
+      ? v.tilemapUrl.replace('~tilePath~', chartTilesPath)
+      : ''
+  } else {
     v = _.merge({}, provider.v2)
-    v.url = v.url ? v.url.replace('~basePath~', apiRoutePrefix[2]) : ''
+    v.url = v.url ? v.url.replace('~tilePath~', chartTilesPath) : ''
   }
   provider = _.omit(provider, [
     '_filePath',

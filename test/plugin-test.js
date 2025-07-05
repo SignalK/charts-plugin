@@ -109,7 +109,8 @@ describe('GET /resources/charts', () => {
   
 })
 
-describe('GET /resources/charts/:identifier/:z/:x/:y', () => {
+
+describe('GET /signalk/chart-tiles/:identifier/:z/:x/:y', () => {
   let plugin
   let testServer
   beforeEach(() =>
@@ -119,11 +120,14 @@ describe('GET /resources/charts/:identifier/:z/:x/:y', () => {
       testServer = server
     })
   )
-  afterEach(done => testServer.close(() => done()))
+  afterEach(done => {
+    plugin.stop()
+    testServer.close(() => done())
+  })
 
   it('returns correct tile from MBTiles file', () => {
     return plugin.start({})
-      .then(() => get(testServer, '/signalk/v1/api/resources/charts/test/4/5/6'))
+      .then(() => get(testServer, '/signalk/chart-tiles/test/4/5/6'))
       .then(response => {
         // unpacked-tiles contains same tiles as the test.mbtiles file
         expectTileResponse(response, 'charts/unpacked-tiles/4/5/6.png', 'image/png')
@@ -133,7 +137,7 @@ describe('GET /resources/charts/:identifier/:z/:x/:y', () => {
   it('returns correct tile from directory', () => {
     const expectedTile = fs.readFileSync(path.resolve(__dirname, 'charts/unpacked-tiles/4/4/6.png'))
     return plugin.start({})
-      .then(() => get(testServer, '/signalk/v1/api/resources/charts/unpacked-tiles/4/4/6'))
+      .then(() => get(testServer, '/signalk/chart-tiles/unpacked-tiles/4/4/6'))
       .then(response => {
         expectTileResponse(response, 'charts/unpacked-tiles/4/4/6.png', 'image/png')
       })
@@ -143,7 +147,7 @@ describe('GET /resources/charts/:identifier/:z/:x/:y', () => {
     const expectedTile = fs.readFileSync(path.resolve(__dirname, 'charts/tms-tiles/5/17/21.png'))
     // Y-coordinate flipped
     return plugin.start({})
-      .then(() => get(testServer, '/signalk/v1/api/resources/charts/tms-tiles/5/17/10'))
+      .then(() => get(testServer, '/signalk/chart-tiles/tms-tiles/5/17/10'))
       .then(response => {
         expectTileResponse(response, 'charts/tms-tiles/5/17/21.png', 'image/png')
       })
@@ -151,7 +155,7 @@ describe('GET /resources/charts/:identifier/:z/:x/:y', () => {
 
   it('returns 404 for missing tile', () => {
     return plugin.start({})
-      .then(() => get(testServer, '/signalk/v1/api/resources/charts/tms-tiles/5/55/10'))
+      .then(() => get(testServer, '/signalk/chart-tiles/tms-tiles/5/55/10'))
       .catch(e => e.response)
       .then(response => {
         expect(response.status).to.equal(404)
@@ -160,7 +164,7 @@ describe('GET /resources/charts/:identifier/:z/:x/:y', () => {
 
   it('returns 404 for wrong chart identifier', () => {
     return plugin.start({})
-      .then(() => get(testServer, '/signalk/v1/api/resources/charts/foo/4/4/6'))
+      .then(() => get(testServer, '/signalk/chart-tiles/foo/4/4/6'))
       .catch(e => e.response)
       .then(response => {
         expect(response.status).to.equal(404)
