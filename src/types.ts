@@ -3,7 +3,7 @@ type MapSourceType =
   | 'S-57'
   | 'WMS'
   | 'WMTS'
-  | 'mapboxstyle'
+  | 'mapstyleJSON'
   | 'tileJSON'
 
 export interface ChartProvider {

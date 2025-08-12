@@ -36,13 +36,16 @@ Chart metadata will then be available to client apps via the resources api `/res
 
 ### Local Chart Files
 
-If you are using chart files stored on the Signal K Server you will need to add the locations where the chart files are stored so the plugin can generate the chart metadata.
+To use chart files stored on the Signal K Server the plugin needs to know where your local chart files
+are stored to generate the chart metadata.
 
-Do this by adding "Chart paths" and providing the path to each folder on the Signal K Server where chart files are stored. _(Defaults to `${signalk-configuration-path}/charts`)_
+You can either:
+1. Put the chart files in the default location _(`/home/<user>/.signalk/charts`)_ 
+2. Add configuration entries for the folders where the chart files are stored. 
 
 <img src="https://user-images.githubusercontent.com/1435910/39382493-57c1e4dc-4a6e-11e8-93e1-cedb4c7662f4.png" alt="Chart paths configuration" width="450"/>
 
-When chart files are added to the folder(s) they will be processed by the plugin and the chart metadata will be available _(after the plugin has been restarted)_.
+>**Note:** After chart files have been added to folders they will be processed after the plugin has been restarted! _(disable / enable the plugin)_ 
 
 
 ### Online chart providers
@@ -83,23 +86,16 @@ Publicly available MBTiles charts can be found from:
 
 Plugin adds support for `/resources/charts` endpoints described in [Signal K specification](http://signalk.org/specification/1.0.0/doc/otherBranches.html#resourcescharts):
 
-- List available charts
+#### List available charts
 
 ```bash
-# v1 API
-GET /signalk/v1/api/resources/charts/` 
-
-# v2 API
 GET /signalk/v2/api/resources/charts/` 
 ```
 
-- Return metadata for selected chart
+#### Return metadata for selected chart
 
 ```bash
-# v1 API
-GET /signalk/v1/api/resources/charts/${identifier}` 
 
-# v2 API
 GET /signalk/v2/api/resources/charts/${identifier}` 
 ```
 

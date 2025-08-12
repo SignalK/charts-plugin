@@ -102,7 +102,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
                 'S-57',
                 'WMS',
                 'WMTS',
-                'mapboxstyle',
+                'mapstyleJSON',
                 'tileJSON'
               ],
               description:
