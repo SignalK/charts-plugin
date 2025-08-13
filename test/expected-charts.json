@@ -14,7 +14,7 @@
     "minzoom": 3,
     "name": "MBTILES_19",
     "scale": 250000,
-    "tilemapUrl": "/signalk/v1/api/resources/charts/test/{z}/{x}/{y}",
+    "tilemapUrl": "/signalk/chart-tiles/test/{z}/{x}/{y}",
     "type": "tilelayer"
   },
   "tms-tiles": {
@@ -32,7 +32,7 @@
     "minzoom": 4,
     "name": "Översikt Svenska Sjökort",
     "scale": 4000000,
-    "tilemapUrl": "/signalk/v1/api/resources/charts/tms-tiles/{z}/{x}/{y}",
+    "tilemapUrl": "/signalk/chart-tiles/tms-tiles/{z}/{x}/{y}",
     "type": "tilelayer"
   },
   "unpacked-tiles": {
@@ -50,7 +50,7 @@
     "minzoom": 3,
     "name": "NOAA MBTiles test file",
     "scale": 250000,
-    "tilemapUrl": "/signalk/v1/api/resources/charts/unpacked-tiles/{z}/{x}/{y}",
+    "tilemapUrl": "/signalk/chart-tiles/unpacked-tiles/{z}/{x}/{y}",
     "type": "tilelayer"
   }
 }

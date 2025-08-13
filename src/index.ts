@@ -9,12 +9,9 @@ import { Request, Response, Application } from 'express'
 import { OutgoingHttpHeaders } from 'http'
 import {
   Plugin,
-  PluginServerApp,
+  ServerAPI,
   ResourceProviderRegistry
 } from '@signalk/server-api'
-
-const MIN_ZOOM = 1
-const MAX_ZOOM = 24
 
 interface Config {
   chartPaths: string[]
@@ -22,14 +19,9 @@ interface Config {
 }
 
 interface ChartProviderApp
-  extends PluginServerApp,
+  extends ServerAPI,
     ResourceProviderRegistry,
     Application {
-  statusMessage?: () => string
-  error: (msg: string) => void
-  debug: (...msg: unknown[]) => void
-  setPluginStatus: (pluginId: string, status?: string) => void
-  setPluginError: (pluginId: string, status?: string) => void
   config: {
     ssl: boolean
     configPath: string
@@ -37,6 +29,10 @@ interface ChartProviderApp
     getExternalPort: () => number
   }
 }
+
+const MIN_ZOOM = 1
+const MAX_ZOOM = 24
+const chartTilesPath = '/signalk/chart-tiles'
 
 module.exports = (app: ChartProviderApp): Plugin => {
   let chartProviders: { [key: string]: ChartProvider } = {}
@@ -47,7 +43,9 @@ module.exports = (app: ChartProviderApp): Plugin => {
   }
   const configBasePath = app.config.configPath
   const defaultChartsPath = path.join(configBasePath, '/charts')
-  const serverMajorVersion = app.config.version ? parseInt(app.config.version.split('.')[0]) : '1'
+  const serverMajorVersion = app.config.version
+    ? parseInt(app.config.version.split('.')[0])
+    : '1'
   ensureDirectoryExists(defaultChartsPath)
 
   // ******** REQUIRED PLUGIN DEFINITION *******
@@ -99,7 +97,14 @@ module.exports = (app: ChartProviderApp): Plugin => {
               type: 'string',
               title: 'Map source / server type',
               default: 'tilelayer',
-              enum: ['tilelayer', 'S-57', 'WMS', 'WMTS', 'mapstyleJSON', 'tileJSON'],
+              enum: [
+                'tilelayer',
+                'S-57',
+                'WMS',
+                'WMTS',
+                'mapstyleJSON',
+                'tileJSON'
+              ],
               description:
                 'Map data source type served by the supplied url. (Use tilelayer for xyz / tms tile sources.)'
             },
@@ -157,7 +162,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
   }
 
   const doStartup = (config: Config) => {
-    app.debug('** loaded config: ', config)
+    app.debug(`** loaded config: ${config}`)
     props = { ...config }
 
     const chartPaths = _.isEmpty(props.chartPaths)
@@ -185,7 +190,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
     const urlBase = `${app.config.ssl ? 'https' : 'http'}://localhost:${
       'getExternalPort' in app.config ? app.config.getExternalPort() : 3000
     }`
-    app.debug('**urlBase**', urlBase)
+    app.debug(`**urlBase** ${urlBase}`)
     app.setPluginStatus('Started')
 
     const loadProviders = bluebird
@@ -214,7 +219,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
     app.debug('** Registering API paths **')
 
     app.get(
-      `/signalk/:version(v[1-2])/api/resources/charts/:identifier/:z([0-9]*)/:x([0-9]*)/:y([0-9]*)`,
+      `${chartTilesPath}/:identifier/:z([0-9]*)/:x([0-9]*)/:y([0-9]*)`,
       async (req: Request, res: Response) => {
         const { identifier, z, x, y } = req.params
         const provider = chartProviders[identifier]
@@ -286,7 +291,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
           listResources: (params: {
             [key: string]: number | string | object | null
           }) => {
-            app.debug(`** listResources()`, params)
+            app.debug(`** listResources() ${params}`)
             return Promise.resolve(
               _.mapValues(chartProviders, (provider) =>
                 sanitizeProvider(provider, 2)
@@ -294,7 +299,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
             )
           },
           getResource: (id: string) => {
-            app.debug(`** getResource()`, id)
+            app.debug(`** getResource() ${id}`)
             const provider = chartProviders[id]
             if (provider) {
               return Promise.resolve(sanitizeProvider(provider, 2))
@@ -364,10 +369,10 @@ const sanitizeProvider = (provider: ChartProvider, version = 1) => {
   let v
   if (version === 1) {
     v = _.merge({}, provider.v1)
-    v.tilemapUrl = v.tilemapUrl.replace('~basePath~', apiRoutePrefix[1])
+    v.tilemapUrl = v.tilemapUrl.replace('~tilePath~', chartTilesPath)
   } else if (version === 2) {
     v = _.merge({}, provider.v2)
-    v.url = v.url ? v.url.replace('~basePath~', apiRoutePrefix[2]) : ''
+    v.url = v.url ? v.url.replace('~tilePath~', chartTilesPath) : ''
   }
   provider = _.omit(provider, [
     '_filePath',
