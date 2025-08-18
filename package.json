@@ -13,8 +13,7 @@
     "lint": "eslint -c .eslintrc.js --ext .ts --ext .js --fix src/",
     "format": "npm run prettier && npm run lint",
     "ci-lint": "eslint -c .eslintrc.js --ext .ts --ext .js src/ && prettier --check src/",
-    "test": "mocha",
-    "deploy": "npm build && npm test && git tag -a v$npm_package_version -m 'Release v$npm_package_version'; git push --tags; npm publish --access public --scope @signalk ."
+    "test": "mocha"
   },
   "license": "Apache-2.0",
   "keywords": [
