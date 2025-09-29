@@ -69,7 +69,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
         items: {
           type: 'object',
           title: 'Provider',
-          required: ['name', 'minzoom', 'maxzoom', 'format', 'url'],
+          required: ['name', 'minzoom', 'maxzoom', 'opacity', 'format', 'url'],
           properties: {
             name: {
               type: 'string',
@@ -92,6 +92,13 @@ module.exports = (app: ChartProviderApp): Plugin => {
               maximum: MAX_ZOOM,
               minimum: MIN_ZOOM,
               default: 15
+            },
+            opacity: {
+              type: 'number',
+              title: `Opacity of the layer, from 0 to 100%`,
+              maximum: 100,
+              minimum: 0,
+              default: 100
             },
             serverType: {
               type: 'string',
@@ -351,6 +358,7 @@ const convertOnlineProviderConfig = (provider: OnlineChartProvider) => {
     maxzoom: Math.min(Math.max(1, provider.maxzoom), 24),
     format: provider.format,
     scale: 250000,
+    opacity: provider.opacity,
     type: provider.serverType ? provider.serverType : 'tilelayer',
     style: provider.style ? provider.style : null,
     v1: {
