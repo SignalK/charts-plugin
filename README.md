@@ -26,6 +26,9 @@ _Note: Version 2 resource paths will only be made available on Signal K server v
 
 3. Activate the plugin
 
+> [!TIP]
+> On Victron Venus devices you [need to install some dependencies manually](https://github.com/SignalK/charts-plugin/issues/40#issuecomment-3396744642) before installing the plugin.
+
 Chart metadata will then be available to client apps via the resources api `/resources/charts` for example:
 - [Freeboard SK](https://www.npmjs.com/package/@signalk/freeboard-sk)
 - [Tuktuk Chart Plotter](https://www.npmjs.com/package/tuktuk-chart-plotter)
