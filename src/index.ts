@@ -1,6 +1,7 @@
 import * as bluebird from 'bluebird'
 import path from 'path'
 import fs from 'fs'
+import os from "os"
 import * as _ from 'lodash'
 import { findCharts } from './charts'
 import { apiRoutePrefix } from './constants'
@@ -20,8 +21,8 @@ interface Config {
 
 interface ChartProviderApp
   extends ServerAPI,
-    ResourceProviderRegistry,
-    Application {
+  ResourceProviderRegistry,
+  Application {
   config: {
     ssl: boolean
     configPath: string
@@ -122,6 +123,24 @@ module.exports = (app: ChartProviderApp): Plugin => {
               description:
                 'Map URL (for tilelayer include {z}, {x} and {y} parameters, e.g. "http://example.org/{z}/{x}/{y}.png")'
             },
+            cached: {
+              type: 'boolean',
+              title: 'Cache tiles locally',
+              description:
+                'If enabled, tiles fetched from the server will be cached locally to reduce bandwidth usage.',
+              default: false
+            },
+            headers: {
+              type: 'array',
+              title: 'Headers',
+              description:
+                'List of http headers to be sent to the server when requesting map tiles.',
+              items: {
+                title: 'Header Name and Value',
+                description: 'Name and Value of the HTTP header',
+                type: 'string'
+              } 
+            },
             style: {
               type: 'string',
               title: 'Vector Map Style',
@@ -165,6 +184,27 @@ module.exports = (app: ChartProviderApp): Plugin => {
     app.debug(`** loaded config: ${config}`)
     props = { ...config }
 
+    const getLocalIPAddress = (): string | null => {
+      const interfaces = os.networkInterfaces();
+
+      for (const name of Object.keys(interfaces)) {
+        const iface = interfaces[name];
+        if (!iface) continue;
+
+        for (const alias of iface) {
+          // Skip internal (i.e., 127.0.0.1) and non-IPv4 addresses
+          if (alias.family === "IPv4" && !alias.internal) {
+            return alias.address;
+          }
+        }
+      }
+
+      return null; // not found
+    }
+    const urlBase = `${app.config.ssl ? 'https' : 'http'}://${getLocalIPAddress()}:${'getExternalPort' in app.config ? app.config.getExternalPort() : 3000
+      }`
+    app.debug(`**urlBase** ${urlBase}`)
+    
     const chartPaths = _.isEmpty(props.chartPaths)
       ? [defaultChartsPath]
       : resolveUniqueChartPaths(props.chartPaths, configBasePath)
@@ -172,7 +212,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
     const onlineProviders = _.reduce(
       props.onlineChartProviders,
       (result: { [key: string]: object }, data) => {
-        const provider = convertOnlineProviderConfig(data)
+        const provider = convertOnlineProviderConfig(data, urlBase)
         result[provider.identifier] = provider
         return result
       },
@@ -233,28 +273,34 @@ module.exports = (app: ChartProviderApp): Plugin => {
         if (!provider) {
           return res.sendStatus(404)
         }
-        switch (provider._fileFormat) {
-          case 'directory':
-            return serveTileFromFilesystem(
-              res,
-              provider,
-              parseInt(z),
-              parseInt(x),
-              parseInt(y)
-            )
-          case 'mbtiles':
-            return serveTileFromMbtiles(
-              res,
-              provider,
-              parseInt(z),
-              parseInt(x),
-              parseInt(y)
-            )
-          default:
-            console.log(
-              `Unknown chart provider fileformat ${provider._fileFormat}`
-            )
-            res.status(500).send()
+        if (provider.cached === true) {
+          return serveTileFromCache(res, provider, parseInt(z), parseInt(x), parseInt(y))
+        }
+        else
+        {
+          switch (provider._fileFormat) {
+            case 'directory':
+              return serveTileFromFilesystem(
+                res,
+                provider,
+                parseInt(z),
+                parseInt(x),
+                parseInt(y)
+              )
+            case 'mbtiles':
+              return serveTileFromMbtiles(
+                res,
+                provider,
+                parseInt(z),
+                parseInt(x),
+                parseInt(y)
+              )
+            default:
+              console.log(
+                `Unknown chart provider fileformat ${provider._fileFormat}`
+              )
+              res.status(500).send()
+          }
         }
       }
     )
@@ -322,6 +368,55 @@ module.exports = (app: ChartProviderApp): Plugin => {
     }
   }
 
+  const serveTileFromCache = async (
+    res: Response,
+    provider: ChartProvider,
+    z: number,
+    x: number,
+    y: number
+  ) => {
+    const tilePath = path.join(defaultChartsPath, `${provider.name}`, `${z}`, `${x}`, `${y}.${provider.format}`)
+    if (fs.existsSync(tilePath)) {
+        res.set('Content-Type', `image/${provider.format}`)
+        res.set('Cache-Control', responseHttpOptions.headers['Cache-Control'])
+        const stream = fs.createReadStream(tilePath)
+        stream.on('error', (err) => {
+          console.error(`Error reading cached tile ${tilePath}:`, err)
+          if (!res.headersSent) {
+            res.sendStatus(500)
+          }
+        })
+        stream.pipe(res)
+        return
+    }
+    if (!provider.remoteUrl) {
+      console.error(`No remote URL defined for cached provider ${provider.name}`)
+      res.sendStatus(500)
+      return
+    }
+    const url = provider.remoteUrl
+    .replace("{z}", z.toString())
+    .replace("{x}", x.toString())
+    .replace("{y}", y.toString())
+    .replace("{-y}", (Math.pow(2, z) - 1 - y).toString());
+    const response = await fetch(url, {
+      headers: provider.headers
+    })
+    if (!response.ok) {
+      console.error(`Error fetching tile ${provider.name}/${z}/${x}/${y}:`)
+      res.sendStatus(500)
+    }
+    const arrayBuffer = await response.arrayBuffer()
+    const buffer = Buffer.from(arrayBuffer)
+    if (!fs.existsSync(path.dirname(tilePath))) {
+        fs.mkdirSync(path.dirname(tilePath), { recursive: true })
+    }
+    fs.writeFileSync(tilePath, buffer)      
+    res.set('Content-Type', `image/${provider.format}`)
+    res.send(buffer)
+
+  }
+
   return plugin
 }
 
@@ -341,8 +436,24 @@ const resolveUniqueChartPaths = (
   return _.uniq(paths)
 }
 
-const convertOnlineProviderConfig = (provider: OnlineChartProvider) => {
+const convertOnlineProviderConfig = (provider: OnlineChartProvider, urlBase: string) => {
   const id = _.kebabCase(_.deburr(provider.name))
+
+  const parseHeaders = (arr?: string[] | null): { [key: string]: string } => {
+    const result: { [key: string]: string } = {}
+    if (!arr) return result
+    for (const entry of arr) {
+      if (typeof entry !== 'string') continue
+      const idx = entry.indexOf(':')
+      if (idx === -1) continue
+      const key = entry.slice(0, idx).trim()
+      const value = entry.slice(idx + 1).trim()
+      if (key) result[key] = value
+    }
+    return result
+  }
+
+
   const data = {
     identifier: id,
     name: provider.name,
@@ -355,13 +466,16 @@ const convertOnlineProviderConfig = (provider: OnlineChartProvider) => {
     type: provider.serverType ? provider.serverType : 'tilelayer',
     style: provider.style ? provider.style : null,
     v1: {
-      tilemapUrl: provider.url,
+      tilemapUrl: provider.cached ? `${urlBase}${chartTilesPath}/${id}/{z}/{x}/{y}` : provider.url,
       chartLayers: provider.layers ? provider.layers : null
     },
     v2: {
-      url: provider.url,
+      url: provider.cached ? `${urlBase}${chartTilesPath}/${id}/{z}/{x}/{y}` : provider.url,
       layers: provider.layers ? provider.layers : null
-    }
+    },
+    cached: provider.cached ? provider.cached : false,
+    remoteUrl: provider.cached ? provider.url : null,
+    headers: parseHeaders(provider.headers),
   }
   return data
 }
