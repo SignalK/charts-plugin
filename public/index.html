@@ -270,7 +270,7 @@
                     })
                     .forEach(([id, info]) => {
 
-                        if (info.cached === true) {
+                        if (info.proxy === true) {
                             const opt = document.createElement('option');
                             opt.value = id;
                             opt.textContent = (info && info.name) ? info.name : id;

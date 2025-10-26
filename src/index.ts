@@ -263,7 +263,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
         if (!provider) {
           return res.sendStatus(404)
         }
-        if (provider.cached === true) {
+        if (provider.proxy === true) {
           return serveTileFromCache(res, provider, iz, ix, iy)
         }
         else
@@ -473,15 +473,15 @@ const convertOnlineProviderConfig = (provider: OnlineChartProvider, urlBase: str
     type: provider.serverType ? provider.serverType : 'tilelayer',
     style: provider.style ? provider.style : null,
     v1: {
-      tilemapUrl: provider.cached ? `${urlBase}${chartTilesPath}/${id}/{z}/{x}/{y}` : provider.url,
+      tilemapUrl: provider.proxy ? `${urlBase}${chartTilesPath}/${id}/{z}/{x}/{y}` : provider.url,
       chartLayers: provider.layers ? provider.layers : null
     },
     v2: {
-      url: provider.cached ? `${urlBase}${chartTilesPath}/${id}/{z}/{x}/{y}` : provider.url,
+      url: provider.proxy ? `${urlBase}${chartTilesPath}/${id}/{z}/{x}/{y}` : provider.url,
       layers: provider.layers ? provider.layers : null
     },
-    cached: provider.cached ? provider.cached : false,
-    remoteUrl: provider.cached ? provider.url : null,
+    proxy: provider.proxy ? provider.proxy : false,
+    remoteUrl: provider.proxy ? provider.url : null,
     headers: parseHeaders(provider.headers),
   }
   return data
