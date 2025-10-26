@@ -75,10 +75,13 @@ describe('GET /resources/charts', () => {
         expect(result.body['test-name']).to.deep.equal({
           bounds: [-180, -90, 180, 90],
           format: 'jpg',
+          headers: {},
           identifier: 'test-name',
           maxzoom: 15,
           minzoom: 2,
           name: 'Test Name',
+          proxy: false,
+          remoteUrl: null,
           scale: 250000,
           "style": null,
           tilemapUrl: 'https://example.com',
