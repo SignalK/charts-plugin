@@ -19,6 +19,7 @@
   "keywords": [
     "signalk",
     "signalk-node-server-plugin",
+    "signalk-webapp",
     "nautic",
     "chart",
     "mbtiles",
@@ -31,6 +32,8 @@
   "dependencies": {
     "@mapbox/mbtiles": "^0.12.1",
     "@signalk/server-api": "^2.0.0",
+    "@turf/boolean-intersects": "^7.2.0",
+    "@turf/helpers": "^7.2.0",
     "bluebird": "3.5.1",
     "lodash": "^4.17.11",
     "xml2js": "0.6.2"

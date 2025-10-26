@@ -6,6 +6,7 @@ import * as _ from 'lodash'
 import { findCharts } from './charts'
 import { apiRoutePrefix } from './constants'
 import { ChartProvider, OnlineChartProvider } from './types'
+import { ChartDownloader } from './chartDownloader'
 import { Request, Response, Application } from 'express'
 import { OutgoingHttpHeaders } from 'http'
 import {
@@ -42,12 +43,16 @@ module.exports = (app: ChartProviderApp): Plugin => {
     chartPaths: [],
     onlineChartProviders: []
   }
+
+  let urlBase: string = ''
   const configBasePath = app.config.configPath
   const defaultChartsPath = path.join(configBasePath, '/charts')
   const serverMajorVersion = app.config.version
     ? parseInt(app.config.version.split('.')[0])
     : '1'
   ensureDirectoryExists(defaultChartsPath)
+
+
 
   // ******** REQUIRED PLUGIN DEFINITION *******
   const CONFIG_SCHEMA = {
@@ -123,21 +128,21 @@ module.exports = (app: ChartProviderApp): Plugin => {
               description:
                 'Map URL (for tilelayer include {z}, {x} and {y} parameters, e.g. "http://example.org/{z}/{x}/{y}.png")'
             },
-            cached: {
+            proxy: {
               type: 'boolean',
-              title: 'Cache tiles locally',
+              title: 'Proxy through signalk server',
               description:
-                'If enabled, tiles fetched from the server will be cached locally to reduce bandwidth usage.',
+                'Create a proxy to serve remote tiles and cache fetched tiles from the remote server, to serve them locally on subsequent requests.',
               default: false
             },
             headers: {
               type: 'array',
               title: 'Headers',
               description:
-                'List of http headers to be sent to the server when requesting map tiles.',
+                'List of http headers to be sent to the remote server when requesting map tiles through proxy.',
               items: {
-                title: 'Header Name and Value',
-                description: 'Name and Value of the HTTP header',
+                title: 'Header Name: Value',
+                description: 'Name and Value of the HTTP header separated by colon',
                 type: 'string'
               } 
             },
@@ -184,25 +189,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
     app.debug(`** loaded config: ${config}`)
     props = { ...config }
 
-    const getLocalIPAddress = (): string | null => {
-      const interfaces = os.networkInterfaces();
-
-      for (const name of Object.keys(interfaces)) {
-        const iface = interfaces[name];
-        if (!iface) continue;
-
-        for (const alias of iface) {
-          // Skip internal (i.e., 127.0.0.1) and non-IPv4 addresses
-          if (alias.family === "IPv4" && !alias.internal) {
-            return alias.address;
-          }
-        }
-      }
-
-      return null; // not found
-    }
-    const urlBase = `${app.config.ssl ? 'https' : 'http'}://${getLocalIPAddress()}:${'getExternalPort' in app.config ? app.config.getExternalPort() : 3000
-      }`
+    urlBase = `${app.config.ssl ? 'https' : 'http'}://localhost:${'getExternalPort' in app.config ? app.config.getExternalPort() : 3000}`
     app.debug(`**urlBase** ${urlBase}`)
     
     const chartPaths = _.isEmpty(props.chartPaths)
@@ -269,12 +256,15 @@ module.exports = (app: ChartProviderApp): Plugin => {
       `${chartTilesPath}/:identifier/:z([0-9]*)/:x([0-9]*)/:y([0-9]*)`,
       async (req: Request, res: Response) => {
         const { identifier, z, x, y } = req.params
+        const ix = parseInt(x)
+        const iy = parseInt(y)
+        const iz = parseInt(z)
         const provider = chartProviders[identifier]
         if (!provider) {
           return res.sendStatus(404)
         }
         if (provider.cached === true) {
-          return serveTileFromCache(res, provider, parseInt(z), parseInt(x), parseInt(y))
+          return serveTileFromCache(res, provider, iz, ix, iy)
         }
         else
         {
@@ -283,17 +273,17 @@ module.exports = (app: ChartProviderApp): Plugin => {
               return serveTileFromFilesystem(
                 res,
                 provider,
-                parseInt(z),
-                parseInt(x),
-                parseInt(y)
+                iz,
+                ix,
+                iy
               )
             case 'mbtiles':
               return serveTileFromMbtiles(
                 res,
                 provider,
-                parseInt(z),
-                parseInt(x),
-                parseInt(y)
+                iz,
+                ix,
+                iy
               )
             default:
               console.log(
@@ -304,6 +294,56 @@ module.exports = (app: ChartProviderApp): Plugin => {
         }
       }
     )
+
+    app.post(`${chartTilesPath}/cache/:identifier/:regionGUID/:maxZoom`, async (req: Request, res: Response) => {
+      const { identifier, regionGUID, maxZoom } = req.params
+      const provider = chartProviders[identifier]
+      if (!provider) {
+        return res.sendStatus(500)
+      }
+      const maxZoomParsed = maxZoom ? parseInt(maxZoom) : 17
+
+      const { jobId, downloader } = ChartDownloader.createAndRegister(urlBase, defaultChartsPath, provider)
+      ;(async () => {
+          await downloader.downloadTiles(regionGUID, maxZoomParsed)
+      })()
+      return res.status(200).json({ progress: `${chartTilesPath}/progress/${jobId}` })
+    })
+
+    app.delete(`${chartTilesPath}/cache/:identifier/:regionGUID`, async (req: Request, res: Response) => {
+      const { identifier, regionGUID } = req.params
+      const provider = chartProviders[identifier]
+      if (!provider) {
+        return res.sendStatus(500)
+      }
+
+      const { jobId, downloader } = ChartDownloader.createAndRegister(urlBase, defaultChartsPath, provider)
+      // Long going process, create an endpoint to monitor progress
+      ;(async () => {
+          await downloader.deleteTiles(regionGUID)
+      })()
+      return res.status(200).json({ progress: `${chartTilesPath}/cache/progress/${jobId}` })
+    })
+
+    app.get(`${chartTilesPath}/cache/progress`, (req: Request, res: Response) => {
+      const progresses = Object.entries(ChartDownloader.ActiveDownloads).map(([id, job]) => {
+        return job.progressInfo()
+      })
+      return res.status(200).json(progresses)
+      
+    })
+
+    app.put(`${chartTilesPath}/cache/progress/:id/cancel`, (req: Request, res: Response) => {
+      const { id } = req.params
+      const parsedId = parseInt(id)
+      const job = ChartDownloader.ActiveDownloads[parsedId]
+      if (job) {
+        job.cancelDownload()
+        return res.status(200).send(`Cancelled job ${parsedId}`)
+      } else {
+        return res.status(404).send(`Job ${parsedId} not found`)
+      }
+    })
 
     app.debug('** Registering v1 API paths **')
 
@@ -375,46 +415,13 @@ module.exports = (app: ChartProviderApp): Plugin => {
     x: number,
     y: number
   ) => {
-    const tilePath = path.join(defaultChartsPath, `${provider.name}`, `${z}`, `${x}`, `${y}.${provider.format}`)
-    if (fs.existsSync(tilePath)) {
-        res.set('Content-Type', `image/${provider.format}`)
-        res.set('Cache-Control', responseHttpOptions.headers['Cache-Control'])
-        const stream = fs.createReadStream(tilePath)
-        stream.on('error', (err) => {
-          console.error(`Error reading cached tile ${tilePath}:`, err)
-          if (!res.headersSent) {
-            res.sendStatus(500)
-          }
-        })
-        stream.pipe(res)
-        return
-    }
-    if (!provider.remoteUrl) {
-      console.error(`No remote URL defined for cached provider ${provider.name}`)
+    const buffer = await ChartDownloader.fetchTile(defaultChartsPath, provider, { x, y, z })
+    if (!buffer) {
       res.sendStatus(500)
       return
     }
-    const url = provider.remoteUrl
-    .replace("{z}", z.toString())
-    .replace("{x}", x.toString())
-    .replace("{y}", y.toString())
-    .replace("{-y}", (Math.pow(2, z) - 1 - y).toString());
-    const response = await fetch(url, {
-      headers: provider.headers
-    })
-    if (!response.ok) {
-      console.error(`Error fetching tile ${provider.name}/${z}/${x}/${y}:`)
-      res.sendStatus(500)
-    }
-    const arrayBuffer = await response.arrayBuffer()
-    const buffer = Buffer.from(arrayBuffer)
-    if (!fs.existsSync(path.dirname(tilePath))) {
-        fs.mkdirSync(path.dirname(tilePath), { recursive: true })
-    }
-    fs.writeFileSync(tilePath, buffer)      
     res.set('Content-Type', `image/${provider.format}`)
     res.send(buffer)
-
   }
 
   return plugin
