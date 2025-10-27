@@ -187,6 +187,13 @@ module.exports = (app: ChartProviderApp): Plugin => {
     // Do not register routes if plugin has been started once already
     pluginStarted === false && registerRoutes()
     pluginStarted = true
+
+    // v2 routes - register as Resource Provider, this needs to be always on startup
+    if (serverMajorVersion === 2) {
+      app.debug('** Registering v2 API paths **')
+      registerAsProvider()
+    }
+
     const urlBase = `${app.config.ssl ? 'https' : 'http'}://localhost:${
       'getExternalPort' in app.config ? app.config.getExternalPort() : 3000
     }`
@@ -273,12 +280,6 @@ module.exports = (app: ChartProviderApp): Plugin => {
       )
       res.json(sanitized)
     })
-
-    // v2 routes
-    if (serverMajorVersion === 2) {
-      app.debug('** Registering v2 API paths **')
-      registerAsProvider()
-    }
   }
 
   // Resources API provider registration
