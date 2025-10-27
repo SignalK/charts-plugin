@@ -473,11 +473,11 @@ const convertOnlineProviderConfig = (provider: OnlineChartProvider, urlBase: str
     type: provider.serverType ? provider.serverType : 'tilelayer',
     style: provider.style ? provider.style : null,
     v1: {
-      tilemapUrl: provider.proxy ? `${urlBase}${chartTilesPath}/${id}/{z}/{x}/{y}` : provider.url,
+      tilemapUrl: provider.proxy ? `~tilePath~/${id}/{z}/{x}/{y}` : provider.url,
       chartLayers: provider.layers ? provider.layers : null
     },
     v2: {
-      url: provider.proxy ? `${urlBase}${chartTilesPath}/${id}/{z}/{x}/{y}` : provider.url,
+      url: provider.proxy ? `~tilePath~/${id}/{z}/{x}/{y}` : provider.url,
       layers: provider.layers ? provider.layers : null
     },
     proxy: provider.proxy ? provider.proxy : false,
