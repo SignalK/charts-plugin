@@ -1,6 +1,6 @@
 import * as bluebird from 'bluebird'
 import path from 'path'
-import MBTiles from '@mapbox/mbtiles'
+import MBTiles from '@signalk/mbtiles'
 import * as xml2js from 'xml2js'
 import { Dirent, promises as fs } from 'fs'
 import * as _ from 'lodash'
