@@ -1,120 +1,185 @@
 import fs from "fs";
 import path from "path";
 import pLimit from "p-limit"
+import type { BBox, FeatureCollection, Polygon, MultiPolygon, Feature, Position } from 'geojson'
+import splitGeoJSON from 'geojson-antimeridian-cut';
 import booleanIntersects from '@turf/boolean-intersects'
-import type { BBox, FeatureCollection, Polygon } from 'geojson'
+import { bbox } from '@turf/bbox'
 import { polygon } from '@turf/helpers'
+import checkDiskSpace from "check-disk-space";
+import { ChartProvider } from "./types";
 
-interface Tile {
+export interface Tile {
     x: number
     y: number
     z: number
 }
 
-export enum DownloadStatus {
-    NotStarted,
-    Preparing,
-    Downloading,
-    Completed,
-    Cancelled
+export enum Status {
+    Stopped,
+    Running,
+    
+}
+
+export class ChartSeedingManager {
+    // Placeholder for future cache management methods
+    public static ActiveJobs: { [key: number]: ChartDownloader } = {};
+
+    public static async createJob(urlBase: string, chartsPath: string, provider: any, maxZoom: number, regionGUI: string | undefined = undefined, bbox: BBox | undefined = undefined, tile: Tile | undefined = undefined): Promise<ChartDownloader> {
+        const downloader = new ChartDownloader(urlBase, chartsPath, provider);
+        if (regionGUI)
+            downloader.initalizeJobFromRegion(regionGUI, maxZoom);
+        else if (bbox)
+            downloader.initializeJobFromBBox(bbox, maxZoom);
+        else if (tile) {
+            downloader.initializeJobFromTile(tile, maxZoom);
+        }
+        this.ActiveJobs[downloader.ID] = downloader;
+        return downloader;
+    }
+
+    public static registerRoutes(app: any){
+        
+    }
 }
 
 export class ChartDownloader {
-    public static ActiveDownloads: { [key: number]: ChartDownloader } = {};
+    private static DISK_USAGE_LIMIT = 1024 * 1024 * 1024; // 1 GB
     private static nextJobId = 1;
 
-    private downloadStatus: DownloadStatus = DownloadStatus.NotStarted;
-    private progress: number = 0;
+    private id : number = ChartDownloader.nextJobId++;
+    private maxZoom : number = 15;
+    private status: Status = Status.Stopped;
     private totalTiles: number = 0;
     private downloadedTiles: number = 0;
     private failedTiles: number = 0;
     private cachedTiles: number = 0;
 
     private concurrentDownloadsLimit = 20;
-    private regionName: string = "";
+    private areaDescription: string = "";
     private cancelRequested: boolean = false;
 
+    private tiles: Tile[] = [];
+    private tilesToDownload: Tile[] = [];
 
-    constructor(private urlBase: string, private chartsPath: string, private provider: any) {}
 
-    public static createAndRegister(urlBase: string, chartsPath: string, provider: any): { jobId: number, downloader: ChartDownloader } {
-        const downloader = new ChartDownloader(urlBase, chartsPath, provider);
-        const jobId = this.nextJobId++;
-        this.ActiveDownloads[jobId] = downloader;
-        return { jobId, downloader };
+    constructor(private urlBase: string, private chartsPath: string, private provider: any) { 
+
+    }
+
+    get ID(): number {
+        return this.id;
     }
 
 
-    /**
-     * Download map tiles for a specific region.
-     * @param region
-     * @param maxZoom Maximum zoom level to download
-     */
-    async downloadTiles(regionGUID: string, maxZoom: number): Promise<void> {
-        this.downloadStatus = DownloadStatus.Preparing;
+    public async initalizeJobFromRegion(regionGUID: string, maxZoom: number): Promise<void> {
         const region = await this.getRegion(regionGUID);
         const geojson = this.convertRegionToGeoJSON(region);
-        const tiles = this.getTilesForGeoJSON(geojson, this.provider.minzoom, maxZoom);
-        const tileToDownload = await this.filterCachedTiles(tiles);
-        
-        this.totalTiles = tiles.length;
-        this.downloadedTiles = 0;
-        this.cachedTiles = this.totalTiles - tileToDownload.length;
-        this.regionName = region.name || "";
+        this.tiles = this.getTilesForGeoJSON(geojson, this.provider.minzoom, maxZoom);
+        this.tilesToDownload = this.filterCachedTiles(this.tiles);
 
-        this.downloadStatus = DownloadStatus.Downloading;
+        this.status = Status.Stopped;
+        this.totalTiles = this.tiles.length;
+        this.cachedTiles = this.totalTiles - this.tilesToDownload.length;
+        this.areaDescription = `Region: ${region.name || ""}`;
+        this.maxZoom = maxZoom;
+    }
+
+    public async initializeJobFromBBox(bbox: BBox, maxZoom: number): Promise<void> {
+        this.tiles = this.getTilesForBBox(bbox, maxZoom);
+        this.tilesToDownload = this.filterCachedTiles(this.tiles);
+
+        this.status = Status.Stopped;
+        this.totalTiles = this.tiles.length;
+        this.cachedTiles = this.totalTiles - this.tilesToDownload.length;
+        this.areaDescription = `BBox: [${bbox.join(", ")}]`;
+        this.maxZoom = maxZoom;
+    } 
+
+     public async initializeJobFromTile(tile: Tile, maxZoom: number): Promise<void> {
+        this.tiles = this.getSubTiles(tile, maxZoom);
+        this.tilesToDownload = this.filterCachedTiles(this.tiles);
+
+        this.status = Status.Stopped;
+        this.totalTiles = this.tiles.length;
+        this.cachedTiles = this.totalTiles - this.tilesToDownload.length;
+        this.areaDescription = `Tile: [${tile.x}, ${tile.y}, ${tile.z}]`;
+        this.maxZoom = maxZoom;
+    } 
+
+    /**
+     * Download map tiles for a specific area.
+     * 
+     */
+    async seedCache(): Promise<void> {  
+        this.cancelRequested = false;
+        this.status = Status.Running;
+        this.tilesToDownload = await this.filterCachedTiles(this.tiles);
+        this.downloadedTiles = 0;
+        this.cachedTiles = this.totalTiles - this.tilesToDownload.length;
         const limit = pLimit(this.concurrentDownloadsLimit); // concurrent download limit
         const promises: Promise<void>[] = [];
-        for (const tile of tileToDownload) {
+        let tileCounter = 0
+        this.tilesToDownload = await this.filterCachedTiles(this.tiles);
+        for (const tile of this.tilesToDownload) {
             if (this.cancelRequested) break;
+            if (tileCounter % 1000 === 0 && tileCounter > 0) {
+                try {
+                    const { free } = await checkDiskSpace(this.chartsPath)
+                    if (free < ChartDownloader.DISK_USAGE_LIMIT) {
+                        console.warn(`Low disk space. Stopping download.`);
+                        break;
+                    }
+                } catch (err) {
+                    console.error(`Error checking disk space:`, err);
+                    break;
+                }
+            }
             promises.push(limit(async () => {
-                if (this.cancelRequested) return;
-                const buffer = await ChartDownloader.fetchTile(this.chartsPath, this.provider, tile);
-                if (this.cancelRequested) return;
+                if (this.cancelRequested)
+                    return;
+                const buffer = await ChartDownloader.getTileFromCacheOrRemote(this.chartsPath, this.provider, tile);
                 if (buffer === null) {
                     this.failedTiles += 1;
                 } else {
                     this.downloadedTiles += 1;
                 }
             }));
+            tileCounter++
         }
         try {
             await Promise.all(promises);
-            
+
         } catch (err) {
             // silent failure, caller can log if needed
             console.error(`Error downloading tiles:`, err);
         }
-        if (this.cancelRequested) {
-            this.downloadStatus = DownloadStatus.Cancelled;
-            return;
-        }
-        this.downloadStatus = DownloadStatus.Completed;
+        this.status = Status.Stopped;
     }
 
-    async deleteTiles(regionGUID: string): Promise<void> {
-        const region = await this.getRegion(regionGUID);
-        const geojson = this.convertRegionToGeoJSON(region);
-        const tiles = this.getTilesForGeoJSON(geojson, this.provider.minzoom, this.provider.maxzoom);
-        for (const tile of tiles) {
+    async deleteCache(): Promise<void> {
+        this.status = Status.Running;
+        for (const tile of this.tiles) {
             if (this.cancelRequested) break;
             const tilePath = path.join(this.chartsPath, `${this.provider.name}`, `${tile.z}`, `${tile.x}`, `${tile.y}.${this.provider.format}`);
             if (fs.existsSync(tilePath)) {
                 try {
-                    await fs.promises.unlink(tilePath);
+                    fs.promises.unlink(tilePath);
+                    this.cachedTiles -= 1;
+                    this.cachedTiles = Math.max(this.cachedTiles, 0);
                 } catch (err) {
                     console.error(`Error deleting cached tile ${tilePath}:`, err);
                 }
             }
         }
-        this.downloadStatus = DownloadStatus.Completed;
+        this.status = Status.Stopped;
     }
 
-    public cancelDownload() {
+    public cancelJob() {
         this.cancelRequested = true;
     }
 
-    async filterCachedTiles(allTiles: Tile[]): Promise<Tile[]> {
+    private filterCachedTiles(allTiles: Tile[]): Tile[] {
         const uncachedTiles: Tile[] = [];
         for (const tile of allTiles) {
             const tilePath = path.join(this.chartsPath, `${this.provider.name}`, `${tile.z}`, `${tile.x}`, `${tile.y}.${this.provider.format}`);
@@ -125,20 +190,21 @@ export class ChartDownloader {
         return uncachedTiles;
     }
 
-    public progressInfo(){
+    public info() {
         return {
+            id: this.id,
             chartName: this.provider.name,
-            regionName: this.regionName,
+            regionName: this.areaDescription,
             totalTiles: this.totalTiles,
             downloadedTiles: this.downloadedTiles,
             cachedTiles: this.cachedTiles,
             failedTiles: this.failedTiles,
-            progress: this.totalTiles > 0 ? (this.downloadedTiles + this.cachedTiles) / this.totalTiles : 0,
-            status: this.downloadStatus
+            progress: this.totalTiles > 0 ? (this.downloadedTiles + this.cachedTiles + this.failedTiles) / this.totalTiles : 0,
+            status: this.status
         };
     }
 
-    static async fetchTile(chartsPath: string, provider: any, tile: Tile): Promise<Buffer | null> {
+    static async getTileFromCacheOrRemote(chartsPath: string, provider: any, tile: Tile): Promise<Buffer | null> {
         const tilePath = path.join(chartsPath, `${provider.name}`, `${tile.z}`, `${tile.x}`, `${tile.y}.${provider.format}`);
         if (fs.existsSync(tilePath)) {
             try {
@@ -148,10 +214,17 @@ export class ChartDownloader {
                 console.error(`Error reading cached tile ${tilePath}:`, err);
             }
         }
-        if (!provider.remoteUrl) {
-            console.error(`No remote URL defined for cached provider ${provider.name}`);
-            return null;
+        const buffer = await this.fetchTileFromRemote(provider, tile);
+        if (buffer) {
+            if (!fs.existsSync(path.dirname(tilePath))) {
+                fs.mkdirSync(path.dirname(tilePath), { recursive: true });
+            }
+            await fs.promises.writeFile(tilePath, buffer);
         }
+        return buffer;
+    }
+
+    static async fetchTileFromRemote(provider: any, tile: Tile): Promise<Buffer | null> {
         const url = provider.remoteUrl
             .replace("{z}", tile.z.toString())
             .replace("{x}", tile.x.toString())
@@ -165,13 +238,65 @@ export class ChartDownloader {
         }
         const arrayBuffer = await response.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
-        if (!fs.existsSync(path.dirname(tilePath))) {
-            fs.mkdirSync(path.dirname(tilePath), { recursive: true });
-        }
-        await fs.promises.writeFile(tilePath, buffer);
-        return buffer;
+        return buffer
     }
 
+    getSubTiles(tile: Tile, maxZoom: number): Tile[] {
+        const tiles: Tile[] = [tile];
+
+        for (let z = tile.z + 1; z <= maxZoom; z++) {
+            const zoomDiff = z - tile.z;
+            const factor = Math.pow(2, zoomDiff);
+
+            const startX = tile.x * factor;
+            const startY = tile.y * factor;
+
+            for (let x = startX; x < startX + factor; x++) {
+                for (let y = startY; y < startY + factor; y++) {
+                    tiles.push({ x, y, z });
+                }
+            }
+        }
+
+        return tiles;
+    }
+
+    /**
+     * Get all tiles that intersect a bounding box up to a maximum zoom level.
+     * bbox = [minLon, minLat, maxLon, maxLat]
+     */
+    getTilesForBBox(bbox: BBox, maxZoom: number): Tile[] {
+        const tiles: Tile[] = [];
+        let [minLon, minLat, maxLon, maxLat] = bbox;
+
+        const crossesAntiMeridian = minLon > maxLon;
+
+        // Helper to process a lon/lat box normally
+        const processBBox = (lo1: number, la1: number, lo2: number, la2: number) => {
+            for (let z = 0; z <= maxZoom; z++) {
+                const [minX, maxY] = this.lonLatToTileXY(lo1, la1, z);
+                const [maxX, minY] = this.lonLatToTileXY(lo2, la2, z);
+
+                for (let x = minX; x <= maxX; x++) {
+                    for (let y = minY; y <= maxY; y++) {
+                        tiles.push({ x, y, z });
+                    }
+                }
+            }
+        };
+
+        if (!crossesAntiMeridian) {
+            // normal
+            processBBox(minLon, minLat, maxLon, maxLat);
+        } else {
+            // crosses antimeridian — split into two boxes:
+            // [minLon -> 180] and [-180 -> maxLon]
+            processBBox(minLon, minLat, 180, maxLat);
+            processBBox(-180, minLat, maxLon, maxLat);
+        }
+
+        return tiles;
+    }
 
     getTilesForGeoJSON(
         geojson: FeatureCollection,
@@ -185,11 +310,11 @@ export class ChartDownloader {
                 console.warn("Skipping non-polygon feature");
                 continue;
             }
-
-            const bbox = this.getBBox(feature.geometry as Polygon);
+            
+            const boundingBox = bbox(feature.geometry as Polygon); // [minX, minY, maxX, maxY]
             for (let z = zoomMin; z <= zoomMax; z++) {
-                const [minX, minY] = this.lonLatToTileXY(bbox[0], bbox[3], z); // top-left
-                const [maxX, maxY] = this.lonLatToTileXY(bbox[2], bbox[1], z); // bottom-right
+                const [minX, minY] = this.lonLatToTileXY(boundingBox[0], boundingBox[3], z); // top-left
+                const [maxX, maxY] = this.lonLatToTileXY(boundingBox[2], boundingBox[1], z); // bottom-right
 
                 for (let x = minX; x <= maxX; x++) {
                     for (let y = minY; y <= maxY; y++) {
@@ -207,7 +332,8 @@ export class ChartDownloader {
         return tiles;
     }
 
-    async getRegion(regionGUID: string): Promise<Record<string, any>> {
+
+    private async getRegion(regionGUID: string): Promise<Record<string, any>> {
         let regionData: any
         const resp = await fetch(`${this.urlBase}/signalk/v2/api/resources/regions/${regionGUID}`)
         if (!resp.ok) {
@@ -220,7 +346,7 @@ export class ChartDownloader {
     }
 
 
-    convertRegionToGeoJSON(region: Record<string, any>): FeatureCollection {
+    private convertRegionToGeoJSON(region: Record<string, any>): FeatureCollection {
         const feature = region.feature;
         if (!feature || feature.type !== "Feature" || !feature.geometry) {
             throw new Error("Invalid region: missing feature or geometry");
@@ -238,24 +364,35 @@ export class ChartDownloader {
                 ...feature.properties,
             },
         };
+        const splitGeoFeature = splitGeoJSON(geoFeature);
+        const features: Feature<Polygon>[] = [];
+
+        const pushFeaturePolygon = (orig: Feature, coords: Position[][], idx?: number) => {
+            const poly: Feature<Polygon> = {
+            type: "Feature",
+            id: idx != null && orig.id ? `${orig.id}-${idx}` : orig.id,
+            geometry: {
+                type: "Polygon",
+                coordinates: coords
+            },
+            properties: orig.properties || {}
+            };
+            features.push(poly);
+        };
+
+        const f = splitGeoFeature as Feature;
+        if (f.geometry && f.geometry.type === "MultiPolygon") {
+            for (let i = 0; i < (f.geometry as MultiPolygon).coordinates.length; i++) {
+                pushFeaturePolygon(f, (f.geometry as MultiPolygon).coordinates[i], i);
+            }
+        } else if (f.geometry && f.geometry.type === "Polygon") {
+            features.push(f as Feature<Polygon>);
+        }
 
         return {
             type: "FeatureCollection" as const,
-            features: [geoFeature],
+            features
         };
-    }
-
-    private getBBox(geometry: Polygon): BBox {
-        let minLon = 180, minLat = 90, maxLon = -180, maxLat = -90;
-        for (const ring of geometry.coordinates) {
-            for (const [lon, lat] of ring) {
-                minLon = Math.min(minLon, lon);
-                minLat = Math.min(minLat, lat);
-                maxLon = Math.max(maxLon, lon);
-                maxLat = Math.max(maxLat, lat);
-            }
-        }
-        return [minLon, minLat, maxLon, maxLat];
     }
 
     private lonLatToTileXY(lon: number, lat: number, zoom: number): [number, number] {

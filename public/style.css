@@ -1,0 +1,116 @@
+#activeJobsTable {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: Arial, sans-serif;
+    margin-top: 8px;
+}
+
+#activeJobsTable th,
+#progressTable td {
+    border: 1px solid #ddd;
+    padding: 6px 8px;
+    text-align: left;
+    vertical-align: middle;
+    font-size: 13px;
+}
+
+#activeJobsTable th {
+    background: #f4f4f4;
+    font-weight: 600;
+}
+
+.progress-bar {
+    width: 160px;
+    height: 18px;
+    background: #eee;
+    border-radius: 6px;
+    overflow: hidden;
+    display: inline-block;
+    vertical-align: middle;
+    margin-right: 8px;
+}
+
+.progress-fill {
+    display: inline-block;
+    width: 0%;
+    height: 100%;
+    box-sizing: border-box;
+    background: linear-gradient(90deg, #4caf50, #2e7d32);
+    transition: width 300ms ease;
+}
+
+.percent {
+    font-size: 12px;
+    color: #333;
+    vertical-align: middle;
+}
+
+.muted {
+    color: #666;
+    font-size: 12px;
+}
+
+.action-buttons {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+    align-items: center;
+}
+
+.btn {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    width: 36px;
+    height: 36px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    background-color: #444;
+    transition: transform 0.15s ease, background-color 0.2s ease;
+    padding: 0;
+    line-height: 0;
+}
+
+.btn:hover {
+    transform: scale(1.1);
+}
+
+.icon {
+    width: 20px;
+    height: 20px;
+    fill: white;
+    display: block;
+    /* ensures true centering */
+    vertical-align: middle;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.startstop-btn {
+    background-color: #27ae60;
+}
+
+.startstop-btn.running {
+    background-color: #c0392b;
+}
+
+.delete-btn {
+    background-color: #e74c3c;
+}
+
+.delete-btn:hover {
+    background-color: #c0392b;
+}
+
+.remove-btn {
+    background-color: #7f8c8d;
+}
+
+.remove-btn:hover {
+    background-color: #95a5a6;
+}
+
+.hidden {
+    display: none;
+}

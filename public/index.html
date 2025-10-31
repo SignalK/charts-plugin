@@ -2,6 +2,7 @@
 <html>
 
 <head>
+    <link rel="stylesheet" href="style.css" />
     <title>Signalk charts-addin</title>
 </head>
 
@@ -9,21 +10,49 @@
 
     <fieldset>
         <legend>Seed charts for offline usage</legend>
-
+        <strong>Select chart provider:</strong><br>
         <label for="chart">Chart:</label>
         <select id="chart" name="chart" required>
-            <option value="">-- Select chart --</option>
-            <option value="eniro">Eniro</option>
-            <option value="openstreetmap">OpenStreetMap</option>
-            <option value="mapbox">Mapbox</option>
         </select>
-        <label for="region">Region</label>
-        <select id="region" name="region" required>
-            <option value="s" selected="selected">seconds</option>
+        <br>
+        <strong>Select region type:</strong>
+        <br>
+        <!-- Choice 1: Predefined Region -->
+        <label>
+            <input type="radio" name="inputType" value="region" checked>
+            Region
+        </label>
+        <select id="region" name="region">
         </select>
+
+        <br>
+
+        <!-- Choice 2: Bounding Box -->
+        <label>
+            <input type="radio" name="inputType" value="bbox">
+            Bounding Box (minLon, minLat, maxLon, maxLat) West to East, South to North
+        </label>
+        <div>
+            <input type="number" id="bboxMinLon" placeholder="minLon" step="0.0001" disabled value="16.51">
+            <input type="number" id="bboxMinLat" placeholder="minLat" step="0.0001" disabled value="58.59">
+            <input type="number" id="bboxMaxLon" placeholder="maxLon" step="0.0001" disabled value="16.60">
+            <input type="number" id="bboxMaxLat" placeholder="maxLat" step="0.0001" disabled value="58.65">
+        </div>
+        <!-- Choice 3: Tile -->
+        <!-- <label>
+            <input type="radio" name="inputType" value="tile">
+            Tile (x, y, z)
+        </label>
+        <div>
+            <input type="number" id="tileX" placeholder="x" disabled>
+            <input type="number" id="tileY" placeholder="y" disabled>
+            <input type="number" id="tileZ" placeholder="z" disabled>
+        </div> -->
+
+        <strong>Select max zoom:</strong><br>
         <label for="maxZoom">Max Zoom</label>
         <select id="maxZoom" name="maxZoom" required>
-            <option value="4" selected="selected">4</option>
+            <option value="4">4</option>
             <option value="5">5</option>
             <option value="6">6</option>
             <option value="7">7</option>
@@ -34,291 +63,44 @@
             <option value="12">12</option>
             <option value="13">13</option>
             <option value="14">14</option>
-            <option value="15">15</option>
+            <option value="15" selected="selected">15</option>
             <option value="16">16</option>
             <option value="17">17</option>
             <option value="18">18</option>
             <option value="19">19</option>
             <option value="20">20</option>
-            <option value="21">21</option>
-            <option value="22">22</option>
-            <option value="23">23</option>
-            <option value="24">24</option>
         </select>
-        <button id="seedChartsButton">Seed Chart</button>
-        <button id="clearCacheButton">Clear Cache</button>
+
+        <br>
+        <button id="createJobButton">Create</button>
     </fieldset>
 
     <div id="output">
-    <style>
-        #progressTable {
-            width: 100%;
-            border-collapse: collapse;
-            font-family: Arial, sans-serif;
-            margin-top: 8px;
-        }
-        #progressTable th, #progressTable td {
-            border: 1px solid #ddd;
-            padding: 6px 8px;
-            text-align: left;
-            vertical-align: middle;
-            font-size: 13px;
-        }
-        #progressTable th {
-            background: #f4f4f4;
-            font-weight: 600;
-        }
-        .progress-bar {
-            width: 160px;
-            height: 12px;
-            background: #eee;
-            border-radius: 6px;
-            overflow: hidden;
-            display: inline-block;
-            vertical-align: middle;
-            margin-right: 8px;
-        }
-        .progress-fill {
-            display: inline-block;
-            width: 0%;
-            height: 100%;
-            box-sizing: border-box;
-            background: linear-gradient(90deg,#4caf50,#2e7d32);
-            transition: width 300ms ease;
-        }
-        .percent {
-            font-size: 12px;
-            color: #333;
-            vertical-align: middle;
-        }
-        .muted { color: #666; font-size: 12px; }
-    </style>
-
-    <table id="progressTable" aria-live="polite">
-        <thead>
-            <tr>
-                <th>#</th>
-                <th>Chart</th>
-                <th>Region</th>
-                <th>Total tiles</th>
-                <th>Downloaded</th>
-                <th>Cached</th>
-                <th>Failed</th>
-                <th>Progress</th>
-                <th>Status</th>
-                <th>Actions</th>
-            </tr>
-        </thead>
-        <tbody>
-            <tr><td colspan="7" class="muted">Loading progress…</td></tr>
-        </tbody>
-    </table>
-
-    <script>
-    (function () {
-        const tbody = document.querySelector('#progressTable tbody');
-        if (!tbody) return;
-
-        const fmt = n => (typeof n === 'number' ? n.toLocaleString() : '-');
-        const statusText = s => {
-            switch (s) {
-                case 0: return 'NotStarted';
-                case 1: return 'Preparing';
-                case 2: return 'Downloading';
-                case 3: return 'Completed';
-                case 4: return 'Cancelled';
-                default: return String(s);
-            }
-        };
-
-        async function cancelJob(id) {
-            try {
-                const resp = await fetch(`/signalk/chart-tiles/cache/progress/${id}/cancel`, { method: 'PUT' });
-                if (!resp.ok) throw new Error('HTTP ' + resp.status);
-                await fetchProgress();
-            } catch (err) {
-                console.error(`Error cancelling job ${id}:`, err);
-                alert(`Error cancelling job ${id}: ${err.message}`);
-            }
-        }
-
-        function render(items) {
-            tbody.innerHTML = '';
-            if (!Array.isArray(items) || items.length === 0) {
-                const tr = document.createElement('tr');
-                tr.innerHTML = '<td colspan="10" class="muted">No active jobs</td>';
-                tbody.appendChild(tr);
-                return;
-            }
-
-            items.forEach((it, idx) => {
-                const tr = document.createElement('tr');
-
-                const pct = (typeof it.progress === 'number' && isFinite(it.progress)) ? Math.max(0, Math.min(100, it.progress * 100)) : 0;
-                const pctText = `${pct.toFixed(1)}%`;
-
-                tr.innerHTML = [
-                    `<td>${idx + 1}</td>`,
-                    `<td>${it.chartName || '-'}</td>`,
-                    `<td>${it.regionName || '-'}</td>`,
-                    `<td>${fmt(it.totalTiles)}</td>`,
-                    `<td>${fmt(it.downloadedTiles)}</td>`,
-                    `<td>${fmt(it.cachedTiles)}</td>`,
-                    `<td>${fmt(it.failedTiles)}</td>`,
-                    `<td>
-                         <span class="progress-bar" aria-hidden="true">
-                             <span class="progress-fill" style="width:${pct}%"></span>
-                         </span>
-                         <span class="percent">${pctText}</span>
-                     </td>`,
-                    `<td>${statusText(it.status)}</td>`,
-                    `<td><button class="cancel-btn" data-id="${idx + 1}">Cancel</button></td>`
-                ].join('');
-
-                tbody.appendChild(tr);
-            });
-        }
-
-        // delegated click handler for cancel buttons (cancelJob is in this IIFE scope)
-        tbody.addEventListener('click', (e) => {
-            const target = e.target;
-            const btn = (typeof target.closest === 'function') ? target.closest('.cancel-btn') : (target.classList && target.classList.contains('cancel-btn') ? target : null);
-            if (!btn) return;
-            const id = btn.getAttribute('data-id') || btn.dataset.id;
-            if (!id) return;
-            cancelJob(id);
-        });
-
-        async function fetchProgress() {
-            try {
-                const resp = await fetch('/signalk/chart-tiles/cache/progress');
-                if (!resp.ok) throw new Error('HTTP ' + resp.status);
-                const data = await resp.json();
-                render(data);
-            } catch (err) {
-                console.error('Error fetching progress:', err);
-                tbody.innerHTML = '<tr><td colspan="10" class="muted">Error loading progress</td></tr>';
-            }
-        }
-
-        
-
-        fetchProgress();
-        // refresh every 2 seconds
-        setInterval(fetchProgress, 2000);
-    })();
-    </script>
+        <table id="activeJobsTable" aria-live="polite">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Chart</th>
+                    <th>Region</th>
+                    <th>Total tiles</th>
+                    <th>Downloaded</th>
+                    <th>Cached</th>
+                    <th>Failed</th>
+                    <th>Progress</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td colspan="7" class="muted">Loading progress…</td>
+                </tr>
+            </tbody>
+        </table>
     </div>
 
-    <script>
-        document.addEventListener('DOMContentLoaded', async () => {
-            // Fetch available regions and populate the region select box
-            const regionSelect = document.getElementById('region');
-            if (!regionSelect) return;
+    <script src="index.js"></script>
 
-            try {
-                const resp = await fetch('/signalk/v2/api/resources/regions');
-                if (!resp.ok) throw new Error(`Failed to fetch regions: ${resp.status}`);
-                const data = await resp.json();
-                console.log('Regions data:', data);
-                // clear existing options
-                regionSelect.innerHTML = '';
-
-                const entries = Object.entries(data || {});
-                entries
-                    .sort(([, a], [, b]) => {
-                        const na = (a && a.name) ? String(a.name) : '';
-                        const nb = (b && b.name) ? String(b.name) : '';
-                        return na.localeCompare(nb);
-                    })
-                    .forEach(([id, info]) => {
-                        const opt = document.createElement('option');
-                        opt.value = id;
-                        opt.textContent = (info && info.name) ? info.name : id;
-                        regionSelect.appendChild(opt);
-                        
-                    });
-
-                // if no regions returned, add a fallback option
-                if (!regionSelect.options.length) {
-                    const opt = document.createElement('option');
-                    opt.value = '';
-                    opt.textContent = '-- No regions available --';
-                    regionSelect.appendChild(opt);
-                }
-            } catch (err) {
-                console.error('Error loading regions:', err);
-            }
-
-            //Fetch available maps and populate the chart select box
-            const chartSelect = document.getElementById('chart');
-            if (!chartSelect) return;
-
-            try {
-                const resp = await fetch('/signalk/v2/api/resources/charts');
-                if (!resp.ok) throw new Error(`Failed to fetch charts: ${resp.status}`);
-                const data = await resp.json();
-                // clear existing options
-                chartSelect.innerHTML = '';
-
-                const entries = Object.entries(data || {});
-                entries
-                    .sort(([, a], [, b]) => {
-                        const na = (a && a.name) ? String(a.name) : '';
-                        const nb = (b && b.name) ? String(b.name) : '';
-                        return na.localeCompare(nb);
-                    })
-                    .forEach(([id, info]) => {
-
-                        if (info.proxy === true) {
-                            const opt = document.createElement('option');
-                            opt.value = id;
-                            opt.textContent = (info && info.name) ? info.name : id;
-                            chartSelect.appendChild(opt);
-                        }
-                    });
-
-                // if no maps returned, add a fallback option
-                if (!chartSelect.options.length) {
-                    const opt = document.createElement('option');
-                    opt.value = '';
-                    opt.textContent = '-- No maps available --';
-                    chartSelect.appendChild(opt);
-                }
-            } catch (err) {
-                console.error('Error loading maps:', err);
-            }
-        });
-
-        document.getElementById('seedChartsButton').addEventListener('click', async () => {
-            try {
-                const chart = document.getElementById('chart').value;
-                const region = document.getElementById('region').value;
-                const maxZoom = document.getElementById('maxZoom').value;
-                const resp = await fetch(`/signalk/chart-tiles/cache/${chart}/${region}/${maxZoom}`, { method: 'POST' });
-                if (!resp.ok) throw new Error(`Failed to seed charts: ${resp.status}`);
-                const data = await resp.json();
-                console.log('Seeded charts:', data);
-            } catch (err) {
-                console.error('Error seeding charts:', err);
-            }
-        });
-
-        document.getElementById('clearCacheButton').addEventListener('click', async () => {
-            try {
-                const chart = document.getElementById('chart').value;
-                const region = document.getElementById('region').value;
-                const resp = await fetch(`/signalk/chart-tiles/cache/${chart}/${region}`, { method: 'DELETE' });
-                if (!resp.ok) throw new Error(`Failed to clear charts cache: ${resp.status}`);
-                const data = await resp.json();
-                console.log('Cleared charts cache:', data);
-            } catch (err) {
-                console.error('Error clearing charts cache:', err);
-            }
-        });
-
-
-    </script>
 </body>
 
 </html>
