@@ -1,10 +1,12 @@
 import * as bluebird from 'bluebird'
 import path from 'path'
 import fs from 'fs'
+import os from "os"
 import * as _ from 'lodash'
 import { findCharts } from './charts'
 import { apiRoutePrefix } from './constants'
 import { ChartProvider, OnlineChartProvider } from './types'
+import { ChartSeedingManager, ChartDownloader, Tile } from './chartDownloader'
 import { Request, Response, Application } from 'express'
 import { OutgoingHttpHeaders } from 'http'
 import {
@@ -20,8 +22,8 @@ interface Config {
 
 interface ChartProviderApp
   extends ServerAPI,
-    ResourceProviderRegistry,
-    Application {
+  ResourceProviderRegistry,
+  Application {
   config: {
     ssl: boolean
     configPath: string
@@ -41,12 +43,16 @@ module.exports = (app: ChartProviderApp): Plugin => {
     chartPaths: [],
     onlineChartProviders: []
   }
+
+  let urlBase: string = ''
   const configBasePath = app.config.configPath
   const defaultChartsPath = path.join(configBasePath, '/charts')
   const serverMajorVersion = app.config.version
     ? parseInt(app.config.version.split('.')[0])
     : '1'
   ensureDirectoryExists(defaultChartsPath)
+
+
 
   // ******** REQUIRED PLUGIN DEFINITION *******
   const CONFIG_SCHEMA = {
@@ -122,6 +128,24 @@ module.exports = (app: ChartProviderApp): Plugin => {
               description:
                 'Map URL (for tilelayer include {z}, {x} and {y} parameters, e.g. "http://example.org/{z}/{x}/{y}.png")'
             },
+            proxy: {
+              type: 'boolean',
+              title: 'Proxy through signalk server',
+              description:
+                'Create a proxy to serve remote tiles and cache fetched tiles from the remote server, to serve them locally on subsequent requests.',
+              default: false
+            },
+            headers: {
+              type: 'array',
+              title: 'Headers',
+              description:
+                'List of http headers to be sent to the remote server when requesting map tiles through proxy.',
+              items: {
+                title: 'Header Name: Value',
+                description: 'Name and Value of the HTTP header separated by colon',
+                type: 'string'
+              } 
+            },
             style: {
               type: 'string',
               title: 'Vector Map Style',
@@ -165,6 +189,9 @@ module.exports = (app: ChartProviderApp): Plugin => {
     app.debug(`** loaded config: ${config}`)
     props = { ...config }
 
+    urlBase = `${app.config.ssl ? 'https' : 'http'}://localhost:${'getExternalPort' in app.config ? app.config.getExternalPort() : 3000}`
+    app.debug(`**urlBase** ${urlBase}`)
+    
     const chartPaths = _.isEmpty(props.chartPaths)
       ? [defaultChartsPath]
       : resolveUniqueChartPaths(props.chartPaths, configBasePath)
@@ -172,7 +199,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
     const onlineProviders = _.reduce(
       props.onlineChartProviders,
       (result: { [key: string]: object }, data) => {
-        const provider = convertOnlineProviderConfig(data)
+        const provider = convertOnlineProviderConfig(data, urlBase)
         result[provider.identifier] = provider
         return result
       },
@@ -194,10 +221,6 @@ module.exports = (app: ChartProviderApp): Plugin => {
       registerAsProvider()
     }
 
-    const urlBase = `${app.config.ssl ? 'https' : 'http'}://localhost:${
-      'getExternalPort' in app.config ? app.config.getExternalPort() : 3000
-    }`
-    app.debug(`**urlBase** ${urlBase}`)
     app.setPluginStatus('Started')
 
     const loadProviders = bluebird
@@ -229,35 +252,99 @@ module.exports = (app: ChartProviderApp): Plugin => {
       `${chartTilesPath}/:identifier/:z([0-9]*)/:x([0-9]*)/:y([0-9]*)`,
       async (req: Request, res: Response) => {
         const { identifier, z, x, y } = req.params
+        const ix = parseInt(x)
+        const iy = parseInt(y)
+        const iz = parseInt(z)
         const provider = chartProviders[identifier]
         if (!provider) {
           return res.sendStatus(404)
         }
-        switch (provider._fileFormat) {
-          case 'directory':
-            return serveTileFromFilesystem(
-              res,
-              provider,
-              parseInt(z),
-              parseInt(x),
-              parseInt(y)
-            )
-          case 'mbtiles':
-            return serveTileFromMbtiles(
-              res,
-              provider,
-              parseInt(z),
-              parseInt(x),
-              parseInt(y)
-            )
-          default:
-            console.log(
-              `Unknown chart provider fileformat ${provider._fileFormat}`
-            )
-            res.status(500).send()
+        if (provider.proxy === true) {
+          return serveTileFromCacheOrRemote(res, provider, iz, ix, iy)
+        }
+        else
+        {
+          switch (provider._fileFormat) {
+            case 'directory':
+              return serveTileFromFilesystem(
+                res,
+                provider,
+                iz,
+                ix,
+                iy
+              )
+            case 'mbtiles':
+              return serveTileFromMbtiles(
+                res,
+                provider,
+                iz,
+                ix,
+                iy
+              )
+            default:
+              console.log(
+                `Unknown chart provider fileformat ${provider._fileFormat}`
+              )
+              res.status(500).send()
+          }
         }
       }
     )
+
+    app.post(`${chartTilesPath}/cache/:identifier`, async (req: Request, res: Response) => {
+      const { identifier } = req.params
+      const { regionGUID, tile, bbox, maxZoom } = req.body as {
+        regionGUID?: string;
+        tile?: Tile; // query params come in as strings
+        bbox?: {
+          minLon: number;
+          minLat: number;
+          maxLon: number;
+          maxLat: number;
+        };
+        maxZoom?: string;
+      };
+      const provider = chartProviders[identifier]
+      if (!provider) {
+        return res.sendStatus(500).send("Provider not found")
+      }
+      if (!maxZoom) {
+        return res.status(400).send('maxZoom parameter is required')
+      }
+      const maxZoomParsed = parseInt(maxZoom) 
+      const job = await ChartSeedingManager.createJob(urlBase, defaultChartsPath, provider, maxZoomParsed, regionGUID, bbox ? [bbox.minLon, bbox.minLat, bbox.maxLon, bbox.maxLat] : undefined, tile )
+      return res.status(200)
+    })
+
+    app.get(`${chartTilesPath}/cache/jobs`, (req: Request, res: Response) => {
+      const jobs = Object.entries(ChartSeedingManager.ActiveJobs).map(([id, job]) => {
+        return job.info()
+      })
+      return res.status(200).json(jobs)
+
+    })
+
+    app.post(`${chartTilesPath}/cache/jobs/:id`, (req: Request, res: Response) => {
+      const { id } = req.params
+      const { action } = req.body as { action: string }
+      const parsedId = parseInt(id)
+      const job = ChartSeedingManager.ActiveJobs[parsedId]
+      if (job && action) {
+        if (action === 'start') {
+          job.seedCache()
+        } else if (action === 'stop') {
+          job.cancelJob()
+        } else if (action === 'delete') {
+          job.deleteCache()
+        } else if (action === 'remove') {
+          delete ChartSeedingManager.ActiveJobs[parsedId]
+        }
+        else {
+          return res.status(404).send(`Job ${parsedId} not found`)
+        }
+        return res.status(200).send(`Job ${parsedId} ${action}ed`)
+      }
+    })
 
     app.debug('** Registering v1 API paths **')
 
@@ -322,6 +409,22 @@ module.exports = (app: ChartProviderApp): Plugin => {
     }
   }
 
+  const serveTileFromCacheOrRemote = async (
+    res: Response,
+    provider: ChartProvider,
+    z: number,
+    x: number,
+    y: number
+  ) => {
+    const buffer = await ChartDownloader.getTileFromCacheOrRemote(defaultChartsPath, provider, { x, y, z })
+    if (!buffer) {
+      res.sendStatus(500)
+      return
+    }
+    res.set('Content-Type', `image/${provider.format}`)
+    res.send(buffer)
+  }
+
   return plugin
 }
 
@@ -341,8 +444,26 @@ const resolveUniqueChartPaths = (
   return _.uniq(paths)
 }
 
-const convertOnlineProviderConfig = (provider: OnlineChartProvider) => {
+const convertOnlineProviderConfig = (provider: OnlineChartProvider, urlBase: string) => {
   const id = _.kebabCase(_.deburr(provider.name))
+
+  const parseHeaders = (arr: string[] | undefined): { [key: string]: string } => {
+    if (arr === undefined) {
+      return {}
+    }
+    return arr.reduce<{ [key: string]: string }>((acc, entry) => {
+      if(typeof entry == 'string') {
+        const idx = entry.indexOf(':');
+        const key = entry.slice(0, idx).trim();
+        const value = entry.slice(idx + 1).trim();
+        if (key && value) {
+          acc[key] = value  
+        }
+      }
+      return acc
+    }, {})
+  }
+
   const data = {
     identifier: id,
     name: provider.name,
@@ -355,13 +476,16 @@ const convertOnlineProviderConfig = (provider: OnlineChartProvider) => {
     type: provider.serverType ? provider.serverType : 'tilelayer',
     style: provider.style ? provider.style : null,
     v1: {
-      tilemapUrl: provider.url,
+      tilemapUrl: provider.proxy ? `~tilePath~/${id}/{z}/{x}/{y}` : provider.url,
       chartLayers: provider.layers ? provider.layers : null
     },
     v2: {
-      url: provider.url,
+      url: provider.proxy ? `~tilePath~/${id}/{z}/{x}/{y}` : provider.url,
       layers: provider.layers ? provider.layers : null
-    }
+    },
+    proxy: provider.proxy ? provider.proxy : false,
+    remoteUrl: provider.proxy ? provider.url : null,
+    headers: parseHeaders(provider.headers),
   }
   return data
 }
