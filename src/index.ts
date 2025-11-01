@@ -221,10 +221,6 @@ module.exports = (app: ChartProviderApp): Plugin => {
       registerAsProvider()
     }
 
-    const urlBase = `${app.config.ssl ? 'https' : 'http'}://localhost:${
-      'getExternalPort' in app.config ? app.config.getExternalPort() : 3000
-    }`
-    app.debug(`**urlBase** ${urlBase}`)
     app.setPluginStatus('Started')
 
     const loadProviders = bluebird

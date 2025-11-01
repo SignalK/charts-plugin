@@ -116,6 +116,7 @@ export class ChartDownloader {
         this.status = Status.Running;
         this.tilesToDownload = await this.filterCachedTiles(this.tiles);
         this.downloadedTiles = 0;
+        this.failedTiles = 0;
         this.cachedTiles = this.totalTiles - this.tilesToDownload.length;
         const limit = pLimit(this.concurrentDownloadsLimit); // concurrent download limit
         const promises: Promise<void>[] = [];
