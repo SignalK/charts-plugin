@@ -457,7 +457,9 @@ const convertOnlineProviderConfig = (provider: OnlineChartProvider, urlBase: str
     }
     return arr.reduce<{ [key: string]: string }>((acc, entry) => {
       if(typeof entry == 'string') {
-        const [key, value] = entry.split(':').map((s) => s.trim())
+        const idx = entry.indexOf(':');
+        const key = entry.slice(0, idx).trim();
+        const value = entry.slice(idx + 1).trim();
         if (key && value) {
           acc[key] = value  
         }
