@@ -79,6 +79,7 @@ function openMbtilesFile(file: string, filename: string) {
           format: res.metadata.format,
           type: 'tilelayer',
           scale: parseInt(res.metadata.scale) || 250000,
+          opacity: 100,
           v1: {
             tilemapUrl: `~tilePath~/${identifier}/{z}/{x}/{y}`,
             chartLayers: res.metadata.vector_layers
@@ -184,6 +185,7 @@ function parseTilemapResource(tilemapResource: string) {
           format,
           type: 'tilelayer',
           scale: parseInt(scale) || 250000,
+          opacity: 100,
           identifier: '',
           _filePath: ''
         }
@@ -218,6 +220,7 @@ function parseMetadataJson(metadataJson: string) {
         format: metadata.format,
         type: metadata.type,
         scale: parseInt(metadata.scale) || 250000,
+        opacity: 100,
         identifier: '',
         _filePath: ''
       }

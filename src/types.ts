@@ -28,6 +28,7 @@ export interface ChartProvider {
   bounds?: number[]
   minzoom?: number
   maxzoom?: number
+  opacity?: number
   format?: string
   style?: string
   layers?: string[]
@@ -38,6 +39,7 @@ export interface OnlineChartProvider {
   description: string
   minzoom: number
   maxzoom: number
+  opacity: number
   serverType: MapSourceType
   format: 'png' | 'jpg'
   url: string
