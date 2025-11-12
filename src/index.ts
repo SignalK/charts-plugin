@@ -132,7 +132,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
               type: 'boolean',
               title: 'Proxy through signalk server',
               description:
-                'Create a proxy to serve remote tiles and cache fetched tiles from the remote server, to serve them locally on subsequent requests.',
+                'Create a proxy to serve remote tiles and cache fetched tiles from the remote server, to serve them locally on subsequent requests. Use webapp to configure seeding jobs to prefetch tiles to local cache.',
               default: false
             },
             headers: {

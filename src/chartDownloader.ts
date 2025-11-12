@@ -76,7 +76,7 @@ export class ChartDownloader {
         const region = await this.getRegion(regionGUID);
         const geojson = this.convertRegionToGeoJSON(region);
         this.tiles = this.getTilesForGeoJSON(geojson, this.provider.minzoom, maxZoom);
-        this.tilesToDownload = this.filterCachedTiles(this.tiles);
+        this.tilesToDownload = await this.filterCachedTiles(this.tiles);
 
         this.status = Status.Stopped;
         this.totalTiles = this.tiles.length;
@@ -87,7 +87,7 @@ export class ChartDownloader {
 
     public async initializeJobFromBBox(bbox: BBox, maxZoom: number): Promise<void> {
         this.tiles = this.getTilesForBBox(bbox, maxZoom);
-        this.tilesToDownload = this.filterCachedTiles(this.tiles);
+        this.tilesToDownload = await this.filterCachedTiles(this.tiles);
 
         this.status = Status.Stopped;
         this.totalTiles = this.tiles.length;
@@ -98,7 +98,7 @@ export class ChartDownloader {
 
      public async initializeJobFromTile(tile: Tile, maxZoom: number): Promise<void> {
         this.tiles = this.getSubTiles(tile, maxZoom);
-        this.tilesToDownload = this.filterCachedTiles(this.tiles);
+        this.tilesToDownload = await this.filterCachedTiles(this.tiles);
 
         this.status = Status.Stopped;
         this.totalTiles = this.tiles.length;
@@ -122,38 +122,41 @@ export class ChartDownloader {
         const promises: Promise<void>[] = [];
         let tileCounter = 0
         this.tilesToDownload = await this.filterCachedTiles(this.tiles);
-        for (const tile of this.tilesToDownload) {
-            if (this.cancelRequested) break;
-            if (tileCounter % 1000 === 0 && tileCounter > 0) {
-                try {
-                    const { free } = await checkDiskSpace(this.chartsPath)
-                    if (free < ChartDownloader.DISK_USAGE_LIMIT) {
-                        console.warn(`Low disk space. Stopping download.`);
-                        break;
-                    }
-                } catch (err) {
-                    console.error(`Error checking disk space:`, err);
-                    break;
-                }
-            }
-            promises.push(limit(async () => {
-                if (this.cancelRequested)
+
+        const tasks = this.tilesToDownload.map(tile =>
+            limit(async () => {
+                if (this.cancelRequested) {
+                    this.status = Status.Stopped;
                     return;
+                }
+                if (tileCounter % 1000 === 0 && tileCounter > 0) {
+                    await new Promise(r => setTimeout(r, 0));
+                    try {
+                        const { free } = await checkDiskSpace(this.chartsPath)
+                        if (free < ChartDownloader.DISK_USAGE_LIMIT) {
+                            console.warn(`Low disk space. Stopping download.`);
+                            this.status = Status.Stopped;
+                            return;;
+                        }
+                    } catch (err) {
+                        console.error(`Error checking disk space:`, err);
+                        this.status = Status.Stopped;
+                        return;
+                    }
+                }
                 const buffer = await ChartDownloader.getTileFromCacheOrRemote(this.chartsPath, this.provider, tile);
                 if (buffer === null) {
-                    this.failedTiles += 1;
+                    this.failedTiles++;
                 } else {
-                    this.downloadedTiles += 1;
+                    this.downloadedTiles++;
                 }
-            }));
-            tileCounter++
-        }
-        try {
-            await Promise.all(promises);
+            })
+        );
 
+        try {
+            await Promise.all(tasks);
         } catch (err) {
-            // silent failure, caller can log if needed
-            console.error(`Error downloading tiles:`, err);
+            console.error('Error downloading tiles:', err);
         }
         this.status = Status.Stopped;
     }
@@ -163,15 +166,16 @@ export class ChartDownloader {
         for (const tile of this.tiles) {
             if (this.cancelRequested) break;
             const tilePath = path.join(this.chartsPath, `${this.provider.name}`, `${tile.z}`, `${tile.x}`, `${tile.y}.${this.provider.format}`);
-            if (fs.existsSync(tilePath)) {
-                try {
-                    fs.promises.unlink(tilePath);
-                    this.cachedTiles -= 1;
-                    this.cachedTiles = Math.max(this.cachedTiles, 0);
-                } catch (err) {
+
+            try {
+                await fs.promises.unlink(tilePath);
+                this.cachedTiles = Math.max(this.cachedTiles - 1, 0);
+            } catch (err: any) {
+                if (err.code !== 'ENOENT') {
                     console.error(`Error deleting cached tile ${tilePath}:`, err);
                 }
             }
+            
         }
         this.status = Status.Stopped;
     }
@@ -180,15 +184,30 @@ export class ChartDownloader {
         this.cancelRequested = true;
     }
 
-    private filterCachedTiles(allTiles: Tile[]): Tile[] {
-        const uncachedTiles: Tile[] = [];
-        for (const tile of allTiles) {
-            const tilePath = path.join(this.chartsPath, `${this.provider.name}`, `${tile.z}`, `${tile.x}`, `${tile.y}.${this.provider.format}`);
-            if (!fs.existsSync(tilePath)) {
-                uncachedTiles.push(tile);
+    private async filterCachedTiles(allTiles: Tile[]): Promise<Tile[]> {
+        const checks = allTiles.map(async (tile) => {
+            const tilePath = path.join(
+                this.chartsPath,
+                this.provider.name,
+                `${tile.z}`,
+                `${tile.x}`,
+                `${tile.y}.${this.provider.format}`
+            );
+
+            try {
+                await fs.promises.access(tilePath);   // file exists
+                return null;                // filter out cached tile
+            } catch (err: any) {
+                if (err.code === "ENOENT") {
+                    return tile;            // file does not exist → uncached
+                }
+                console.error("Unexpected fs error:", err);
+                return tile;                // treat unknown errors as uncached
             }
-        }
-        return uncachedTiles;
+        });
+
+        const results = await Promise.all(checks);
+        return results.filter((t): t is Tile => t !== null);
     }
 
     public info() {
@@ -207,39 +226,55 @@ export class ChartDownloader {
 
     static async getTileFromCacheOrRemote(chartsPath: string, provider: any, tile: Tile): Promise<Buffer | null> {
         const tilePath = path.join(chartsPath, `${provider.name}`, `${tile.z}`, `${tile.x}`, `${tile.y}.${provider.format}`);
-        if (fs.existsSync(tilePath)) {
-            try {
-                const data = await fs.promises.readFile(tilePath);
-                return data;
-            } catch (err) {
-                console.error(`Error reading cached tile ${tilePath}:`, err);
-            }
+
+        try {
+            const data = await fs.promises.readFile(tilePath);
+            return data;
+        } catch (err) {
+            //Cache miss, proceed to fetching from remote
         }
         const buffer = await this.fetchTileFromRemote(provider, tile);
         if (buffer) {
-            if (!fs.existsSync(path.dirname(tilePath))) {
-                fs.mkdirSync(path.dirname(tilePath), { recursive: true });
+            const dir = path.dirname(tilePath);
+            try {
+                await fs.promises.mkdir(path.dirname(tilePath), { recursive: true });
+                await fs.promises.writeFile(tilePath, buffer);
+            } catch (err) {
+                console.error(`Error writing tile ${tilePath}:`, err);
             }
-            await fs.promises.writeFile(tilePath, buffer);
         }
         return buffer;
     }
 
-    static async fetchTileFromRemote(provider: any, tile: Tile): Promise<Buffer | null> {
+    static async fetchTileFromRemote(provider: any, tile: Tile, timeoutMs = 5000): Promise<Buffer | null> {
         const url = provider.remoteUrl
             .replace("{z}", tile.z.toString())
+            // To be able to handle NOAA WMTS caching as a tilemap source
+            .replace("{z-2}", (tile.z - 2).toString())           
             .replace("{x}", tile.x.toString())
             .replace("{y}", tile.y.toString())
             .replace("{-y}", (Math.pow(2, tile.z) - 1 - tile.y).toString());
-        const response = await fetch(url, {
-            headers: provider.headers
-        });
-        if (!response.ok) {
+        const controller = new AbortController();
+        const id = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+            const response = await fetch(url, {
+                headers: provider.headers,
+                signal: controller.signal 
+            });
+            if (!response.ok) {
+                return null;
+            }
+            const arrayBuffer = await response.arrayBuffer();
+            const buffer = Buffer.from(arrayBuffer);
+            return buffer;
+        }
+        catch (err)
+        {
             return null;
         }
-        const arrayBuffer = await response.arrayBuffer();
-        const buffer = Buffer.from(arrayBuffer);
-        return buffer
+        finally {
+            clearTimeout(id);
+        }
     }
 
     getSubTiles(tile: Tile, maxZoom: number): Tile[] {
