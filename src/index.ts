@@ -418,7 +418,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
   ) => {
     const buffer = await ChartDownloader.getTileFromCacheOrRemote(defaultChartsPath, provider, { x, y, z })
     if (!buffer) {
-      res.sendStatus(500)
+      res.sendStatus(502)
       return
     }
     res.set('Content-Type', `image/${provider.format}`)
