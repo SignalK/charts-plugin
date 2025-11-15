@@ -312,7 +312,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
         return res.status(400).send('maxZoom parameter is required')
       }
       const maxZoomParsed = parseInt(maxZoom) 
-      const job = await ChartSeedingManager.createJob(urlBase, defaultChartsPath, provider, maxZoomParsed, regionGUID, bbox ? [bbox.minLon, bbox.minLat, bbox.maxLon, bbox.maxLat] : undefined, tile )
+      const job = await ChartSeedingManager.createJob(app.resourcesApi, defaultChartsPath, provider, maxZoomParsed, regionGUID, bbox ? [bbox.minLon, bbox.minLat, bbox.maxLon, bbox.maxLat] : undefined, tile )
       return res.status(200)
     })
 

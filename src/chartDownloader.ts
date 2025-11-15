@@ -7,7 +7,7 @@ import booleanIntersects from '@turf/boolean-intersects'
 import { bbox } from '@turf/bbox'
 import { polygon } from '@turf/helpers'
 import checkDiskSpace from "check-disk-space";
-import { ChartProvider } from "./types";
+import { ResourcesApi } from '@signalk/server-api'
 
 export interface Tile {
     x: number
@@ -22,11 +22,17 @@ export enum Status {
 }
 
 export class ChartSeedingManager {
-    // Placeholder for future cache management methods
     public static ActiveJobs: { [key: number]: ChartDownloader } = {};
 
-    public static async createJob(urlBase: string, chartsPath: string, provider: any, maxZoom: number, regionGUI: string | undefined = undefined, bbox: BBox | undefined = undefined, tile: Tile | undefined = undefined): Promise<ChartDownloader> {
-        const downloader = new ChartDownloader(urlBase, chartsPath, provider);
+    public static async createJob(
+        resourcesApi: ResourcesApi,
+        chartsPath: string,
+        provider: any,
+        maxZoom: number,
+        regionGUI: string | undefined = undefined,
+        bbox: BBox | undefined = undefined,
+        tile: Tile | undefined = undefined): Promise<ChartDownloader> {
+        const downloader = new ChartDownloader(resourcesApi, chartsPath, provider);
         if (regionGUI)
             downloader.initalizeJobFromRegion(regionGUI, maxZoom);
         else if (bbox)
@@ -38,8 +44,8 @@ export class ChartSeedingManager {
         return downloader;
     }
 
-    public static registerRoutes(app: any){
-        
+    public static registerRoutes(app: any) {
+
     }
 }
 
@@ -63,7 +69,7 @@ export class ChartDownloader {
     private tilesToDownload: Tile[] = [];
 
 
-    constructor(private urlBase: string, private chartsPath: string, private provider: any) { 
+    constructor(private resourcesApi: ResourcesApi, private chartsPath: string, private provider: any) { 
 
     }
 
@@ -71,9 +77,8 @@ export class ChartDownloader {
         return this.id;
     }
 
-
     public async initalizeJobFromRegion(regionGUID: string, maxZoom: number): Promise<void> {
-        const region = await this.getRegion(regionGUID);
+        const region = await this.resourcesApi.getResource("regions", regionGUID) as Record<string, any>;
         const geojson = this.convertRegionToGeoJSON(region);
         this.tiles = this.getTilesForGeoJSON(geojson, this.provider.minzoom, maxZoom);
         this.tilesToDownload = await this.filterCachedTiles(this.tiles);
@@ -81,7 +86,7 @@ export class ChartDownloader {
         this.status = Status.Stopped;
         this.totalTiles = this.tiles.length;
         this.cachedTiles = this.totalTiles - this.tilesToDownload.length;
-        this.areaDescription = `Region: ${region.name || ""}`;
+        this.areaDescription = `Region: ${region?.name ??""}`;
         this.maxZoom = maxZoom;
     }
 
@@ -129,7 +134,7 @@ export class ChartDownloader {
                     this.status = Status.Stopped;
                     return;
                 }
-                if (tileCounter % 1000 === 0 && tileCounter > 0) {
+                if (tileCounter % 1000 === 0) {
                     await new Promise(r => setTimeout(r, 0));
                     try {
                         const { free } = await checkDiskSpace(this.chartsPath)
@@ -144,6 +149,7 @@ export class ChartDownloader {
                         return;
                     }
                 }
+                tileCounter++;
                 const buffer = await ChartDownloader.getTileFromCacheOrRemote(this.chartsPath, this.provider, tile);
                 if (buffer === null) {
                     this.failedTiles++;
@@ -231,7 +237,7 @@ export class ChartDownloader {
             const data = await fs.promises.readFile(tilePath);
             return data;
         } catch (err) {
-            //Cache miss, proceed to fetching from remote
+            //Cache miss, proceed to fetch from remote
         }
         const buffer = await this.fetchTileFromRemote(provider, tile);
         if (buffer) {
@@ -249,7 +255,7 @@ export class ChartDownloader {
     static async fetchTileFromRemote(provider: any, tile: Tile, timeoutMs = 5000): Promise<Buffer | null> {
         const url = provider.remoteUrl
             .replace("{z}", tile.z.toString())
-            // To be able to handle NOAA WMTS caching as a tilemap source
+            // To be able to handle NOAA WMTS caching as a tilemap source with -2 offset
             .replace("{z-2}", (tile.z - 2).toString())           
             .replace("{x}", tile.x.toString())
             .replace("{y}", tile.y.toString())
@@ -367,20 +373,6 @@ export class ChartDownloader {
 
         return tiles;
     }
-
-
-    private async getRegion(regionGUID: string): Promise<Record<string, any>> {
-        let regionData: any
-        const resp = await fetch(`${this.urlBase}/signalk/v2/api/resources/regions/${regionGUID}`)
-        if (!resp.ok) {
-            const body = await resp.text().catch(() => '')
-            console.error(`Failed to fetch region ${regionGUID}: ${resp.status} ${resp.statusText} ${body}`)
-            return {};
-        }
-        regionData = await resp.json()
-        return regionData;
-    }
-
 
     private convertRegionToGeoJSON(region: Record<string, any>): FeatureCollection {
         const feature = region.feature;
