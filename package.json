@@ -39,6 +39,7 @@
     "check-disk-space": "^3.4.0",
     "geojson-antimeridian-cut": "^0.1.0",
     "lodash": "^4.17.11",
+    "p-limit": "^7.2.0",
     "xml2js": "0.6.2"
   },
   "repository": {
