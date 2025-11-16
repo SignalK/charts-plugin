@@ -52,7 +52,7 @@ export class ChartSeedingManager {
 }
 
 export class ChartDownloader {
-  private static DISK_USAGE_LIMIT = 1024 * 1024 * 1024 // 1 GB
+  private static MINIMUM_FREE_DISK_SPACE = 1024 * 1024 * 1024 // 1 GB
   private static nextJobId = 1
 
   private id: number = ChartDownloader.nextJobId++
@@ -156,7 +156,7 @@ export class ChartDownloader {
           await new Promise((r) => setTimeout(r, 0))
           try {
             const { free } = await checkDiskSpace(this.chartsPath)
-            if (free < ChartDownloader.DISK_USAGE_LIMIT) {
+            if (free < ChartDownloader.MINIMUM_FREE_DISK_SPACE) {
               console.warn(`Low disk space. Stopping download.`)
               this.status = Status.Stopped
               return
