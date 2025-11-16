@@ -69,6 +69,7 @@ For WMS & WMTS sources you can specify the layers you wish to display.
 
 <img src="https://github.com/user-attachments/assets/b9bfba38-8468-4eca-aeb3-96a80fcbc7a6" alt="Online chart provider layers" width="450"/>
 
+A proxy for online charts can be created using the "Proxy through SignalK server" option. If enabled tiles will be fetched from the remote server and cached by the SignalK server making it possible to store the tiles for offline usage. Additional http headers can be passed to the remote server by adding colon separated headers, e.g. User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64). User-Agent is the header name and Mozilla... will be the value.
 
 ### Supported chart formats
 

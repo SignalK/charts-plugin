@@ -31,6 +31,9 @@ export interface ChartProvider {
   format?: string
   style?: string
   layers?: string[]
+  proxy?: boolean
+  remoteUrl?: string
+  headers?: { [key: string]: string }
 }
 
 export interface OnlineChartProvider {
@@ -41,6 +44,8 @@ export interface OnlineChartProvider {
   serverType: MapSourceType
   format: 'png' | 'jpg'
   url: string
+  proxy: boolean
+  headers?: string[]
   style: string
   layers: string[]
 }

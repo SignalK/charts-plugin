@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <link rel="stylesheet" href="style.css" />
+    <title>Signalk charts-addin</title>
+</head>
+
+<body>
+
+    <fieldset>
+        <legend>Seed charts to prefetch tiles for offline usage.</legend>
+        <strong>Select chart provider:</strong><br>
+        <label for="chart">Chart:</label>
+        <select id="chart" name="chart" required>
+        </select>
+        <br>
+        <strong>Select region type:</strong>
+        <br>
+        <!-- Choice 1: Predefined Region -->
+        <label>
+            <input type="radio" name="inputType" value="region" checked>
+            Region
+        </label>
+        <select id="region" name="region">
+        </select>
+
+        <br>
+
+        <!-- Choice 2: Bounding Box -->
+        <label>
+            <input type="radio" name="inputType" value="bbox">
+            Bounding Box (minLon, minLat, maxLon, maxLat) West to East, South to North
+        </label>
+        <div>
+            <input type="number" id="bboxMinLon" placeholder="minLon" step="0.0001" disabled value="16.51">
+            <input type="number" id="bboxMinLat" placeholder="minLat" step="0.0001" disabled value="58.59">
+            <input type="number" id="bboxMaxLon" placeholder="maxLon" step="0.0001" disabled value="16.60">
+            <input type="number" id="bboxMaxLat" placeholder="maxLat" step="0.0001" disabled value="58.65">
+        </div>
+        <!-- Choice 3: Tile -->
+        <!-- <label>
+            <input type="radio" name="inputType" value="tile">
+            Tile (x, y, z)
+        </label>
+        <div>
+            <input type="number" id="tileX" placeholder="x" disabled>
+            <input type="number" id="tileY" placeholder="y" disabled>
+            <input type="number" id="tileZ" placeholder="z" disabled>
+        </div> -->
+
+        <strong>Select max zoom:</strong><br>
+        <label for="maxZoom">Max Zoom</label>
+        <select id="maxZoom" name="maxZoom" required>
+            <option value="4">4</option>
+            <option value="5">5</option>
+            <option value="6">6</option>
+            <option value="7">7</option>
+            <option value="8">8</option>
+            <option value="9">9</option>
+            <option value="10">10</option>
+            <option value="11">11</option>
+            <option value="12">12</option>
+            <option value="13">13</option>
+            <option value="14">14</option>
+            <option value="15" selected="selected">15</option>
+            <option value="16">16</option>
+            <option value="17">17</option>
+            <option value="18">18</option>
+            <option value="19">19</option>
+            <option value="20">20</option>
+        </select>
+
+        <br>
+        <button id="createJobButton">Create Seeding Job</button>
+    </fieldset>
+
+    <div id="output">
+        <table id="activeJobsTable" aria-live="polite">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Chart</th>
+                    <th>Region</th>
+                    <th>Total tiles</th>
+                    <th>Downloaded</th>
+                    <th>Cached</th>
+                    <th>Failed</th>
+                    <th>Progress</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td colspan="7" class="muted">Loading progress…</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <script src="index.js"></script>
+
+</body>
+
+</html>
