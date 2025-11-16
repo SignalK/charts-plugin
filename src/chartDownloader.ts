@@ -15,6 +15,7 @@ import { bbox } from '@turf/bbox'
 import { polygon } from '@turf/helpers'
 import checkDiskSpace from 'check-disk-space'
 import { ResourcesApi } from '@signalk/server-api'
+import { ChartProvider } from './types'
 
 export interface Tile {
   x: number
@@ -33,7 +34,7 @@ export class ChartSeedingManager {
   public static async createJob(
     resourcesApi: ResourcesApi,
     chartsPath: string,
-    provider: any,
+    provider: ChartProvider,
     maxZoom: number,
     regionGUI: string | undefined = undefined,
     bbox: BBox | undefined = undefined,
@@ -72,7 +73,7 @@ export class ChartDownloader {
   constructor(
     private resourcesApi: ResourcesApi,
     private chartsPath: string,
-    private provider: any
+    private provider: ChartProvider
   ) {}
 
   get ID(): number {
@@ -86,7 +87,7 @@ export class ChartDownloader {
     const region = (await this.resourcesApi.getResource(
       'regions',
       regionGUID
-    )) as Record<string, any>
+    )) as Record<string, unknown>
     const geojson = this.convertRegionToGeoJSON(region)
     this.tiles = this.getTilesForGeoJSON(
       geojson,
@@ -203,8 +204,8 @@ export class ChartDownloader {
       try {
         await fs.promises.unlink(tilePath)
         this.cachedTiles = Math.max(this.cachedTiles - 1, 0)
-      } catch (err: any) {
-        if (err.code !== 'ENOENT') {
+      } catch (err: unknown) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
           console.error(`Error deleting cached tile ${tilePath}:`, err)
         }
       }
@@ -229,8 +230,8 @@ export class ChartDownloader {
       try {
         await fs.promises.access(tilePath) // file exists
         return null // filter out cached tile
-      } catch (err: any) {
-        if (err.code === 'ENOENT') {
+      } catch (err: unknown) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
           return tile // file does not exist → uncached
         }
         console.error('Unexpected fs error:', err)
@@ -262,7 +263,7 @@ export class ChartDownloader {
 
   static async getTileFromCacheOrRemote(
     chartsPath: string,
-    provider: any,
+    provider: ChartProvider,
     tile: Tile
   ): Promise<Buffer | null> {
     const tilePath = path.join(
@@ -292,10 +293,14 @@ export class ChartDownloader {
   }
 
   static async fetchTileFromRemote(
-    provider: any,
+    provider: ChartProvider,
     tile: Tile,
     timeoutMs = 5000
   ): Promise<Buffer | null> {
+    if (!provider.remoteUrl) {
+      console.error(`No remote URL defined for provider ${provider.name}`)
+      return null
+    }
     const url = provider.remoteUrl
       .replace('{z}', tile.z.toString())
       // To be able to handle NOAA WMTS caching as a tilemap source with -2 offset
@@ -419,7 +424,7 @@ export class ChartDownloader {
             const tileBbox = this.tileToBBox(x, y, z)
             const tilePoly = this.bboxPolygon(tileBbox)
 
-            if (booleanIntersects(feature as any, tilePoly)) {
+            if (booleanIntersects(feature as Feature, tilePoly)) {
               tiles.push({ x, y, z })
             }
           }
@@ -431,9 +436,16 @@ export class ChartDownloader {
   }
 
   private convertRegionToGeoJSON(
-    region: Record<string, any>
+    region: Record<string, unknown>
   ): FeatureCollection {
-    const feature = region.feature
+    const feature = region.feature as
+      | {
+          type?: string
+          geometry?: Polygon | MultiPolygon
+          id?: string
+          properties?: Record<string, unknown>
+        }
+      | undefined
     if (!feature || feature.type !== 'Feature' || !feature.geometry) {
       throw new Error('Invalid region: missing feature or geometry')
     }
@@ -443,11 +455,11 @@ export class ChartDownloader {
       id: feature.id || undefined,
       geometry: feature.geometry,
       properties: {
-        name: region.name || '',
-        description: region.description || '',
-        timestamp: region.timestamp || '',
-        source: region.$source || '',
-        ...feature.properties
+        name: (region.name as string) || '',
+        description: (region.description as string) || '',
+        timestamp: (region.timestamp as string) || '',
+        source: (region.$source as string) || '',
+        ...(feature.properties || {})
       }
     }
     const splitGeoFeature = splitGeoJSON(geoFeature)
