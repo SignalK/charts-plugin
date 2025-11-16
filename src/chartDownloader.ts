@@ -48,8 +48,6 @@ export class ChartSeedingManager {
     this.ActiveJobs[downloader.ID] = downloader
     return downloader
   }
-
-  public static registerRoutes(app: any) {}
 }
 
 export class ChartDownloader {
@@ -57,16 +55,16 @@ export class ChartDownloader {
   private static nextJobId = 1
 
   private id: number = ChartDownloader.nextJobId++
-  private maxZoom: number = 15
+  private maxZoom = 15
   private status: Status = Status.Stopped
-  private totalTiles: number = 0
-  private downloadedTiles: number = 0
-  private failedTiles: number = 0
-  private cachedTiles: number = 0
+  private totalTiles = 0
+  private downloadedTiles = 0
+  private failedTiles = 0
+  private cachedTiles = 0
 
   private concurrentDownloadsLimit = 20
-  private areaDescription: string = ''
-  private cancelRequested: boolean = false
+  private areaDescription = ''
+  private cancelRequested = false
 
   private tiles: Tile[] = []
   private tilesToDownload: Tile[] = []
@@ -144,7 +142,6 @@ export class ChartDownloader {
     this.failedTiles = 0
     this.cachedTiles = this.totalTiles - this.tilesToDownload.length
     const limit = pLimit(this.concurrentDownloadsLimit) // concurrent download limit
-    const promises: Promise<void>[] = []
     let tileCounter = 0
     this.tilesToDownload = await this.filterCachedTiles(this.tiles)
 
@@ -284,7 +281,6 @@ export class ChartDownloader {
     }
     const buffer = await this.fetchTileFromRemote(provider, tile)
     if (buffer) {
-      const dir = path.dirname(tilePath)
       try {
         await fs.promises.mkdir(path.dirname(tilePath), { recursive: true })
         await fs.promises.writeFile(tilePath, buffer)
@@ -353,7 +349,7 @@ export class ChartDownloader {
    */
   getTilesForBBox(bbox: BBox, maxZoom: number): Tile[] {
     const tiles: Tile[] = []
-    let [minLon, minLat, maxLon, maxLat] = bbox
+    const [minLon, minLat, maxLon, maxLat] = bbox
 
     const crossesAntiMeridian = minLon > maxLon
 

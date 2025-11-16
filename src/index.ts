@@ -1,7 +1,6 @@
 import * as bluebird from 'bluebird'
 import path from 'path'
 import fs from 'fs'
-import os from 'os'
 import * as _ from 'lodash'
 import { findCharts } from './charts'
 import { apiRoutePrefix } from './constants'
@@ -44,7 +43,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
     onlineChartProviders: []
   }
 
-  let urlBase: string = ''
+  let urlBase = ''
   const configBasePath = app.config.configPath
   const defaultChartsPath = path.join(configBasePath, '/charts')
   const serverMajorVersion = app.config.version
@@ -200,7 +199,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
     const onlineProviders = _.reduce(
       props.onlineChartProviders,
       (result: { [key: string]: object }, data) => {
-        const provider = convertOnlineProviderConfig(data, urlBase)
+        const provider = convertOnlineProviderConfig(data)
         result[provider.identifier] = provider
         return result
       },
@@ -301,7 +300,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
           return res.status(400).send('maxZoom parameter is required')
         }
         const maxZoomParsed = parseInt(maxZoom)
-        const job = await ChartSeedingManager.createJob(
+        await ChartSeedingManager.createJob(
           app.resourcesApi,
           defaultChartsPath,
           provider,
@@ -317,8 +316,8 @@ module.exports = (app: ChartProviderApp): Plugin => {
     )
 
     app.get(`${chartTilesPath}/cache/jobs`, (req: Request, res: Response) => {
-      const jobs = Object.entries(ChartSeedingManager.ActiveJobs).map(
-        ([id, job]) => {
+      const jobs = Object.values(ChartSeedingManager.ActiveJobs).map(
+        (job) => {
           return job.info()
         }
       )
@@ -452,8 +451,7 @@ const resolveUniqueChartPaths = (
 }
 
 const convertOnlineProviderConfig = (
-  provider: OnlineChartProvider,
-  urlBase: string
+  provider: OnlineChartProvider
 ) => {
   const id = _.kebabCase(_.deburr(provider.name))
 
