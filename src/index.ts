@@ -16,6 +16,7 @@ import {
 
 interface Config {
   chartPaths: string[]
+  cachePath: string,
   onlineChartProviders: OnlineChartProvider[]
 }
 
@@ -40,6 +41,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
   let pluginStarted = false
   let props: Config = {
     chartPaths: [],
+    cachePath: '',
     onlineChartProviders: []
   }
 
@@ -50,6 +52,8 @@ module.exports = (app: ChartProviderApp): Plugin => {
     ? parseInt(app.config.version.split('.')[0])
     : '1'
   ensureDirectoryExists(defaultChartsPath)
+
+  let cachePath = defaultChartsPath;
 
   // ******** REQUIRED PLUGIN DEFINITION *******
   const CONFIG_SCHEMA = {
@@ -65,6 +69,11 @@ module.exports = (app: ChartProviderApp): Plugin => {
           title: 'Path',
           description: `Path for chart files, relative to "${configBasePath}"`
         }
+      },
+      cachePath: {
+        type: 'string',
+        title: 'Cache path',
+        description: `Default directory for cached tiles. Defaults to "${defaultChartsPath}"`
       },
       onlineChartProviders: {
         type: 'array',
@@ -195,6 +204,8 @@ module.exports = (app: ChartProviderApp): Plugin => {
     const chartPaths = _.isEmpty(props.chartPaths)
       ? [defaultChartsPath]
       : resolveUniqueChartPaths(props.chartPaths, configBasePath)
+    cachePath = props.cachePath || defaultChartsPath
+    ensureDirectoryExists(cachePath)
 
     const onlineProviders = _.reduce(
       props.onlineChartProviders,
@@ -302,7 +313,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
         const maxZoomParsed = parseInt(maxZoom)
         await ChartSeedingManager.createJob(
           app.resourcesApi,
-          defaultChartsPath,
+          cachePath,
           provider,
           maxZoomParsed,
           regionGUID,
@@ -419,7 +430,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
     y: number
   ) => {
     const buffer = await ChartDownloader.getTileFromCacheOrRemote(
-      defaultChartsPath,
+      cachePath,
       provider,
       { x, y, z }
     )
