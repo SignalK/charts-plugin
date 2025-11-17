@@ -73,7 +73,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
       cachePath: {
         type: 'string',
         title: 'Cache path',
-        description: `Default directory for cached tiles. Defaults to "${defaultChartsPath}"`
+        description: `Directory for cached tiles. Defaults to "${defaultChartsPath}"`
       },
       onlineChartProviders: {
         type: 'array',
