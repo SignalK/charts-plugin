@@ -30,7 +30,7 @@
     "email": "mikko.vesikkala@iki.fi"
   },
   "dependencies": {
-    "@mapbox/mbtiles": "^0.12.1",
+    "@signalk/mbtiles" : "0.1.1",
     "@signalk/server-api": "^2.0.0",
     "@turf/bbox": "^7.2.0",
     "@turf/boolean-intersects": "^7.2.0",
