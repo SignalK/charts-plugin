@@ -28,6 +28,7 @@ export function findCharts(chartBaseDir: string) {
       const results = []
       for (const file of files) {
         const isMbtilesFile = file.name.match(/\.mbtiles$/i)
+        const isJSFile = file.name.match(/\.js$/i)
         const filePath = path.resolve(chartBaseDir, file.name)
         const isDirectory = file.isDirectory()
         if (isMbtilesFile) {
@@ -39,6 +40,11 @@ export function findCharts(chartBaseDir: string) {
           }
         } else if (isDirectory) {
           results.push(await directoryToMapInfo(filePath, file.name))
+        } else if (isJSFile) {
+          results.push(await import(filePath).then((mod) => {
+            const provider: ChartProvider = mod.createChartProvider()
+            return provider
+          }))
         } else {
           results.push(null)
         }
