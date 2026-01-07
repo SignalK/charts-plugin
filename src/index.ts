@@ -16,7 +16,7 @@ import {
 
 interface Config {
   chartPaths: string[]
-  cachePath: string,
+  cachePath: string
   onlineChartProviders: OnlineChartProvider[]
 }
 
@@ -53,7 +53,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
     : '1'
   ensureDirectoryExists(defaultChartsPath)
 
-  let cachePath = defaultChartsPath;
+  let cachePath = defaultChartsPath
 
   // ******** REQUIRED PLUGIN DEFINITION *******
   const CONFIG_SCHEMA = {
@@ -327,11 +327,9 @@ module.exports = (app: ChartProviderApp): Plugin => {
     )
 
     app.get(`${chartTilesPath}/cache/jobs`, (req: Request, res: Response) => {
-      const jobs = Object.values(ChartSeedingManager.ActiveJobs).map(
-        (job) => {
-          return job.info()
-        }
-      )
+      const jobs = Object.values(ChartSeedingManager.ActiveJobs).map((job) => {
+        return job.info()
+      })
       return res.status(200).json(jobs)
     })
 
@@ -405,15 +403,19 @@ module.exports = (app: ChartProviderApp): Plugin => {
             if (provider) {
               return Promise.resolve(sanitizeProvider(provider, 2))
             } else {
-              throw new Error('Chart not found!')
+              return Promise.reject(new Error('Chart not found!'))
             }
           },
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           setResource: (id: string, value: any) => {
-            throw new Error(`Not implemented!\n Cannot set ${id} to ${value}`)
+            return Promise.reject(
+              new Error(`Not implemented!\n Cannot set ${id} to ${value}`)
+            )
           },
           deleteResource: (id: string) => {
-            throw new Error(`Not implemented!\n Cannot delete ${id}`)
+            return Promise.reject(
+              new Error(`Not implemented!\n Cannot delete ${id}`)
+            )
           }
         }
       })
@@ -461,9 +463,7 @@ const resolveUniqueChartPaths = (
   return _.uniq(paths)
 }
 
-const convertOnlineProviderConfig = (
-  provider: OnlineChartProvider
-) => {
+const convertOnlineProviderConfig = (provider: OnlineChartProvider) => {
   const id = _.kebabCase(_.deburr(provider.name))
 
   const parseHeaders = (
