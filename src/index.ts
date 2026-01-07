@@ -322,7 +322,11 @@ module.exports = (app: ChartProviderApp): Plugin => {
             : undefined,
           tile
         )
-        return res.status(200)
+        return res.status(200).json({
+          state: 'COMPLETED',
+          statusCode: 200,
+          message: 'OK'
+        })
       }
     )
 
