@@ -60,6 +60,12 @@ module.exports = (app: ChartProviderApp): Plugin => {
     title: 'Signal K Charts',
     type: 'object',
     properties: {
+      versionWarning: {
+        type: 'string',
+        title: 'REQUIRES NODE VERSION >=22',
+        description: 'Starting with version 4 this plugin will not work with Node versions older than 22. You can install an older plugin version from the App store.',
+        default: ''
+      },
       chartPaths: {
         type: 'array',
         title: 'Chart paths',
@@ -193,6 +199,16 @@ module.exports = (app: ChartProviderApp): Plugin => {
   }
 
   const doStartup = (config: Config) => {
+    // Check Node version
+    const nodeVersion = process.versions.node
+    const majorVersion = parseInt(nodeVersion.split('.')[0])
+    if (majorVersion < 22) {
+      const errorMsg = `Node version ${nodeVersion} is not supported. This plugin requires Node version 22 or higher. Please upgrade Node or install an older plugin version.`
+      app.setPluginError(errorMsg)
+      app.debug(errorMsg)
+      return Promise.reject(new Error(errorMsg))
+    }
+
     app.debug(`** loaded config: ${config}`)
     props = { ...config }
 
