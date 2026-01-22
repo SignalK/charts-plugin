@@ -1,20 +1,39 @@
 import * as bluebird from 'bluebird'
 import path from 'path'
-import MBTiles from '@signalk/mbtiles'
 import * as xml2js from 'xml2js'
 import { Dirent, promises as fs } from 'fs'
 import * as _ from 'lodash'
 import { ChartProvider } from './types'
 
+// Dynamically load MBTiles to prevent module load failure
+let MBTiles: any = null
+let mbtilesLoadError: Error | null = null
+
+async function loadMBTiles() {
+  if (MBTiles === null && mbtilesLoadError === null) {
+    try {
+      const module = await import('@signalk/mbtiles')
+      MBTiles = module.default || module
+    } catch (err) {
+      mbtilesLoadError = err as Error
+      console.error('Failed to load @signalk/mbtiles module:', (err as Error).message)
+    }
+  }
+}
+
 export function findCharts(chartBaseDir: string) {
-  return fs
-    .readdir(chartBaseDir, { withFileTypes: true })
+  return loadMBTiles()
+    .then(() => fs.readdir(chartBaseDir, { withFileTypes: true }))
     .then((files) => {
       return bluebird.mapSeries(files, (file: Dirent) => {
         const isMbtilesFile = file.name.match(/\.mbtiles$/i)
         const filePath = path.resolve(chartBaseDir, file.name)
         const isDirectory = file.isDirectory()
         if (isMbtilesFile) {
+          if (mbtilesLoadError) {
+            console.warn(`Skipping mbtiles file ${file.name}: MBTiles module not available`)
+            return Promise.resolve(null)
+          }
           return openMbtilesFile(filePath, file.name)
         } else if (isDirectory) {
           return directoryToMapInfo(filePath, file.name)
