@@ -1,4 +1,3 @@
-import * as bluebird from 'bluebird'
 import path from 'path'
 import fs from 'fs'
 import * as _ from 'lodash'
@@ -250,8 +249,13 @@ module.exports = (app: ChartProviderApp): Plugin => {
 
     app.setPluginStatus('Started')
 
-    const loadProviders = bluebird
-      .mapSeries(chartPaths, (chartPath: string) => findCharts(chartPath))
+    const loadProviders = (async () => {
+      const list = []
+      for (const chartPath of chartPaths) {
+        list.push(await findCharts(chartPath))
+      }
+      return list
+    })()
       .then((list: ChartProvider[]) =>
         _.reduce(list, (result, charts) => _.merge({}, result, charts), {})
       )

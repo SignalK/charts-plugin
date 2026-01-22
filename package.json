@@ -35,7 +35,6 @@
     "@turf/bbox": "^7.2.0",
     "@turf/boolean-intersects": "^7.2.0",
     "@turf/helpers": "^7.2.0",
-    "bluebird": "3.5.1",
     "check-disk-space": "^3.4.0",
     "geojson-antimeridian-cut": "^0.1.0",
     "lodash": "^4.17.11",
