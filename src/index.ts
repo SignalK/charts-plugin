@@ -4,7 +4,12 @@ import * as _ from 'lodash'
 import { findCharts } from './charts'
 import { apiRoutePrefix } from './constants'
 import { ChartProvider, OnlineChartProvider } from './types'
-import { ChartSeedingManager, ChartDownloader, Tile } from './chartDownloader'
+import {
+  ChartSeedingManager,
+  ChartDownloader,
+  JobOptions
+} from './chartDownloader'
+import { openOrCreateMbtiles } from './chartDownloaderMBTilesHelpers'
 import { Request, Response, Application } from 'express'
 import { OutgoingHttpHeaders } from 'http'
 import {
@@ -135,9 +140,9 @@ module.exports = (app: ChartProviderApp): Plugin => {
               type: 'string',
               title: 'Format',
               default: 'png',
-              enum: ['png', 'jpg', 'pbf'],
+              enum: ['png', 'jpg', 'pbf', 'mvt', 'webp'],
               description:
-                'Format of map tiles: raster (png, jpg, etc.) / vector (pbf).'
+                'Format of map tiles: raster (png, jpg, webp, etc.) / vector (pbf, mvt).'
             },
             url: {
               type: 'string',
@@ -203,7 +208,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
     }
   }
 
-  const doStartup = (config: Config) => {
+  const doStartup = async (config: Config) => {
     // Check Node version
     const nodeVersion = process.versions.node
     const majorVersion = parseInt(nodeVersion.split('.')[0])
@@ -228,15 +233,12 @@ module.exports = (app: ChartProviderApp): Plugin => {
     cachePath = props.cachePath || defaultChartsPath
     ensureDirectoryExists(cachePath)
 
-    const onlineProviders = _.reduce(
-      props.onlineChartProviders,
-      (result: { [key: string]: object }, data) => {
-        const provider = convertOnlineProviderConfig(data)
-        result[provider.identifier] = provider
-        return result
-      },
-      {}
-    )
+    const onlineProviders: { [key: string]: object } = {}
+
+    for (const data of props.onlineChartProviders || []) {
+      const provider = await convertOnlineProviderConfig(data)
+      onlineProviders[provider.identifier] = provider
+    }
     app.debug(
       `Start charts plugin. Chart paths: ${chartPaths.join(
         ', '
@@ -263,17 +265,30 @@ module.exports = (app: ChartProviderApp): Plugin => {
       return list
     })()
       .then((list: ChartProvider[]) =>
-        _.reduce(list, (result, charts) => _.merge({}, result, charts), {})
+        _.reduce(
+          list,
+          (result, charts) => Object.assign({}, result, charts),
+          {}
+        )
       )
 
     return loadProviders
-      .then((charts: { [key: string]: ChartProvider }) => {
+      .then(async (charts: { [key: string]: ChartProvider }) => {
         app.debug(
           `Chart plugin: Found ${
             _.keys(charts).length
           } charts from ${chartPaths.join(', ')}.`
         )
-        chartProviders = _.merge({}, charts, onlineProviders)
+        chartProviders = Object.assign({}, charts, onlineProviders)
+
+        for (const provider of Object.values(chartProviders)) {
+          if (provider.proxy === true) {
+            provider._mbtilesHandle = await openOrCreateMbtiles(
+              path.join(cachePath, `${provider.identifier}.mbtiles_`),
+              provider
+            )
+          }
+        }
       })
       .catch((e: Error) => {
         console.error(`Error loading chart providers`, e.message)
@@ -314,44 +329,84 @@ module.exports = (app: ChartProviderApp): Plugin => {
       }
     )
 
+    app.post(`${chartTilesPath}/cache/regions`, (req, res) => {
+      const geojson = req.body
+      const p = path.join(app.getDataDirPath(), 'regions.json')
+      fs.writeFileSync(p, JSON.stringify(geojson, null, 2))
+      // TODO: return json with signalk response format
+      return res.send({ status: 'ok' })
+    })
+
+    app.get(`${chartTilesPath}/cache/regions`, (req, res) => {
+      const p = path.join(app.getDataDirPath(), 'regions.json')
+      try {
+        const raw = fs.readFileSync(p, 'utf8')
+        const data = JSON.parse(raw)
+        return res.json(data)
+      } catch (e) {
+        return res.json({ type: 'FeatureCollection', features: [] })
+      }
+    })
+
+    app.get(`${chartTilesPath}/cache/stats`, (req, res) => {
+      const data = ChartDownloader.getStatistics()
+      return res.json(data)
+    })
+
     app.post(
       `${chartTilesPath}/cache/:identifier`,
       async (req: Request, res: Response) => {
         const { identifier } = req.params
-        const { regionGUID, tile, bbox, maxZoom } = req.body as {
-          regionGUID?: string
-          tile?: Tile // query params come in as strings
-          bbox?: {
-            minLon: number
-            minLat: number
-            maxLon: number
-            maxLat: number
+        const { feature, bbox, minZoom, maxZoom, action, options } =
+          req.body as {
+            feature?: GeoJSON.Feature<GeoJSON.Geometry>
+            bbox?: {
+              minLon: number
+              minLat: number
+              maxLon: number
+              maxLat: number
+            }
+            minZoom?: string
+            maxZoom?: string
+            action?: string
+            options?: JobOptions
           }
-          maxZoom?: string
-        }
         const provider = chartProviders[identifier]
         if (!provider) {
-          return res.sendStatus(500).send('Provider not found')
+          return res.status(500).send('Provider not found')
         }
+        // if (!feature) {
+        //   return res.status(500).send('Feature not found')
+        // }
+        // if (!minZoom) {
+        //   return res.status(400).send('minZoom parameter is required')
+        // }
         if (!maxZoom) {
           return res.status(400).send('maxZoom parameter is required')
         }
+        const minZoomParsed = parseInt(minZoom ?? '1')
         const maxZoomParsed = parseInt(maxZoom)
-        await ChartSeedingManager.createJob(
-          app.resourcesApi,
+        const job = await ChartSeedingManager.createJob(
           cachePath,
           provider,
+          options ? options : { refetch: false, mbtiles: true, vacuum: false },
+          minZoomParsed,
           maxZoomParsed,
-          regionGUID,
+          feature,
           bbox
             ? [bbox.minLon, bbox.minLat, bbox.maxLon, bbox.maxLat]
-            : undefined,
-          tile
+            : undefined
         )
+        if (action === 'start') {
+          job.seedCache()
+        } else if (action === 'delete') {
+          job.deleteCache()
+        }
         return res.status(200).json({
           state: 'COMPLETED',
           statusCode: 200,
-          message: 'OK'
+          message: 'Successfully added new job',
+          id: `${job.ID}`
         })
       }
     )
@@ -378,6 +433,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
           } else if (action === 'delete') {
             job.deleteCache()
           } else if (action === 'remove') {
+            ChartSeedingManager.ActiveJobs[parsedId].cancelJob()
             delete ChartSeedingManager.ActiveJobs[parsedId]
           } else {
             return res.status(404).send(`Job ${parsedId} not found`)
@@ -457,17 +513,17 @@ module.exports = (app: ChartProviderApp): Plugin => {
     x: number,
     y: number
   ) => {
-    const buffer = await ChartDownloader.getTileFromCacheOrRemote(
+    const result = await ChartDownloader.getTileFromCacheOrRemote(
       cachePath,
       provider,
       { x, y, z }
     )
-    if (!buffer) {
+    if (!result.buffer) {
       res.sendStatus(502)
       return
     }
     res.set('Content-Type', `image/${provider.format}`)
-    res.send(buffer)
+    res.send(result.buffer)
   }
 
   return plugin
