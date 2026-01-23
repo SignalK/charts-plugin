@@ -235,7 +235,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
 
     const onlineProviders: { [key: string]: object } = {}
 
-    for (const data of props.onlineChartProviders) {
+    for (const data of props.onlineChartProviders || []) {
       const provider = await convertOnlineProviderConfig(data)
       onlineProviders[provider.identifier] = provider
     }
