@@ -5,7 +5,6 @@ const path = require('path')
 const http = require('http')
 const chai = require('chai')
 const chaiHttp = require('chai-http')
-const Promise = require('bluebird')
 const express = require('express')
 const expect = chai.expect
 const Plugin = require('../plugin/index')

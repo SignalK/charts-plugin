@@ -1,29 +1,51 @@
-import * as bluebird from 'bluebird'
 import path from 'path'
-import MBTiles from '@mapbox/mbtiles'
 import * as xml2js from 'xml2js'
 import { Dirent, promises as fs } from 'fs'
 import * as _ from 'lodash'
 import { ChartProvider } from './types'
+import { promisify } from 'util'
+
+// Dynamically load MBTiles to prevent module load failure
+let MBTiles: any = null
+let mbtilesLoadError: Error | null = null
+
+async function loadMBTiles() {
+  if (MBTiles === null && mbtilesLoadError === null) {
+    try {
+      const module = await import('@signalk/mbtiles')
+      MBTiles = module.default || module
+    } catch (err) {
+      mbtilesLoadError = err as Error
+      console.error('Failed to load @signalk/mbtiles module:', (err as Error).message)
+    }
+  }
+}
 
 export function findCharts(chartBaseDir: string) {
-  return fs
-    .readdir(chartBaseDir, { withFileTypes: true })
-    .then((files) => {
-      return bluebird.mapSeries(files, (file: Dirent) => {
+  return loadMBTiles()
+    .then(() => fs.readdir(chartBaseDir, { withFileTypes: true }))
+    .then(async (files) => {
+      const results = []
+      for (const file of files) {
         const isMbtilesFile = file.name.match(/\.mbtiles$/i)
         const filePath = path.resolve(chartBaseDir, file.name)
         const isDirectory = file.isDirectory()
         if (isMbtilesFile) {
-          return openMbtilesFile(filePath, file.name)
+          if (mbtilesLoadError) {
+            console.warn(`Skipping mbtiles file ${file.name}: MBTiles module not available`)
+            results.push(null)
+          } else {
+            results.push(await openMbtilesFile(filePath, file.name))
+          }
         } else if (isDirectory) {
-          return directoryToMapInfo(filePath, file.name)
+          results.push(await directoryToMapInfo(filePath, file.name))
         } else {
-          return Promise.resolve(null)
+          results.push(null)
         }
-      })
+      }
+      return results
     })
-    .then((result: ChartProvider) => _.filter(result, _.identity))
+    .then((result: (ChartProvider | null | undefined)[]) => _.filter(result, _.identity) as ChartProvider[])
     .then((charts: ChartProvider[]) =>
       _.reduce(
         charts,
@@ -152,10 +174,11 @@ function directoryToMapInfo(file: string, identifier: string) {
 }
 
 function parseTilemapResource(tilemapResource: string) {
+  const parseString = promisify(xml2js.parseString)
   return (
     fs
       .readFile(tilemapResource)
-      .then(bluebird.promisify(xml2js.parseString))
+      .then((data) => parseString(data))
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .then((parsed: any) => {
         const result = parsed.TileMap
