@@ -54,17 +54,23 @@ module.exports = (app: ChartProviderApp): Plugin => {
 
   let cachePath = defaultChartsPath
 
+  // Check Node version for schema
+  const nodeVersion = process.versions.node
+  const nodeMajorVersion = parseInt(nodeVersion.split('.')[0])
+
   // ******** REQUIRED PLUGIN DEFINITION *******
   const CONFIG_SCHEMA = {
     title: 'Signal K Charts',
     type: 'object',
     properties: {
-      versionWarning: {
-        type: 'string',
-        title: 'REQUIRES NODE VERSION >=22',
-        description: 'Starting with version 4 this plugin will not work with Node versions older than 22. You can install an older plugin version from the App store.',
-        default: ''
-      },
+      ...(nodeMajorVersion < 22 && {
+        versionWarning: {
+          type: 'string',
+          title: 'REQUIRES NODE VERSION >=22',
+          description: 'Starting with version 4 this plugin will not work with Node versions older than 22. You can install an older plugin version from the App store.',
+          default: ''
+        }
+      }),
       chartPaths: {
         type: 'array',
         title: 'Chart paths',
