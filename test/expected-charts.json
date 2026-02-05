@@ -52,5 +52,23 @@
     "scale": 250000,
     "tilemapUrl": "/signalk/chart-tiles/unpacked-tiles/{z}/{x}/{y}",
     "type": "tilelayer"
+  },
+  "invalid-format": {
+    "bounds": [
+      -180,
+      -90,
+      180,
+      90
+    ],
+    "chartLayers": [],
+    "description": "Chart with unsupported tile format",
+    "format": "gif",
+    "identifier": "invalid-format",
+    "maxzoom": 5,
+    "minzoom": 1,
+    "name": "Invalid Format Chart",
+    "scale": 250000,
+    "tilemapUrl": "/signalk/chart-tiles/invalid-format/{z}/{x}/{y}",
+    "type": "tilelayer"
   }
 }

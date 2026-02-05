@@ -479,6 +479,12 @@ const responseHttpOptions = {
   }
 }
 
+const isAllowedTileFormat = (format?: string) => {
+  const allowedFormats = new Set(['png', 'jpg', 'jpeg', 'pbf'])
+  const normalized = format ? format.toLowerCase() : ''
+  return normalized !== '' && allowedFormats.has(normalized)
+}
+
 const resolveUniqueChartPaths = (
   chartPaths: string[],
   configBasePath: string
@@ -573,18 +579,30 @@ const serveTileFromFilesystem = (
   y: number
 ) => {
   const { format, _flipY, _filePath } = provider
+  const normalizedFormat = format ? format.toLowerCase() : ''
+  if (!isAllowedTileFormat(normalizedFormat)) {
+    res.status(404).send('Tile not found')
+    return
+  }
   const flippedY = Math.pow(2, z) - 1 - y
-  const file = _filePath
-    ? path.resolve(_filePath, `${z}/${x}/${_flipY ? flippedY : y}.${format}`)
-    : ''
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  res.sendFile(file, responseHttpOptions, (err: any) => {
-    if (err && err.code === 'ENOENT') {
-      res.sendStatus(404)
-    } else if (err) {
-      throw err
+  const tileFile = `${z}/${x}/${_flipY ? flippedY : y}.${normalizedFormat}`
+  const file = _filePath ? path.resolve(_filePath, tileFile) : ''
+  try {
+    if (!file) {
+      res.status(404).send('Tile not found')
+      return
     }
-  })
+    const stats = fs.statSync(file)
+    if (!stats.isFile()) {
+      res.status(404).send('Tile not found')
+      return
+    }
+    fs.accessSync(file, fs.constants.R_OK)
+  } catch {
+    res.status(404).send('Tile not found')
+    return
+  }
+  res.sendFile(file, responseHttpOptions)
 }
 
 const serveTileFromMbtiles = (
@@ -594,6 +612,10 @@ const serveTileFromMbtiles = (
   x: number,
   y: number
 ) => {
+  if (!isAllowedTileFormat(provider.format)) {
+    res.status(404).send('Tile not found')
+    return
+  }
   provider._mbtilesHandle.getTile(
     z,
     x,

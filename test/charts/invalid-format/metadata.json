@@ -1,0 +1,10 @@
+{
+  "name": "Invalid Format Chart",
+  "description": "Chart with unsupported tile format",
+  "bounds": [-180, -90, 180, 90],
+  "minzoom": 1,
+  "maxzoom": 5,
+  "format": "gif",
+  "type": "tilelayer",
+  "scale": 250000
+}
