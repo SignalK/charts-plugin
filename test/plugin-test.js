@@ -30,7 +30,7 @@ describe('GET /resources/charts', () => {
       .then(result => {
         expect(result.status).to.equal(200)
         const resultCharts = result.body
-        expect(_.keys(resultCharts).length).to.deep.equal(3)
+        expect(_.keys(resultCharts).length).to.deep.equal(4)
         expect(resultCharts).to.deep.equal(expectedCharts)
       })
   })
@@ -41,7 +41,7 @@ describe('GET /resources/charts', () => {
       .then(result => {
         expect(result.status).to.equal(200)
         const resultCharts = result.body
-        expect(_.keys(resultCharts).length).to.deep.equal(3)
+        expect(_.keys(resultCharts).length).to.deep.equal(4)
       })
   })
 
@@ -51,7 +51,7 @@ describe('GET /resources/charts', () => {
       .then(result => {
         expect(result.status).to.equal(200)
         const resultCharts = result.body
-        expect(_.keys(resultCharts).length).to.deep.equal(4)
+        expect(_.keys(resultCharts).length).to.deep.equal(5)
         expect(resultCharts['test2']).not.to.equal(undefined)
       })
   })
