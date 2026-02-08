@@ -301,13 +301,24 @@ export class ChartDownloader {
       console.error(`No remote URL defined for provider ${provider.name}`)
       return null
     }
-    const url = provider.remoteUrl
+    let url = provider.remoteUrl
       .replace('{z}', tile.z.toString())
       // To be able to handle NOAA WMTS caching as a tilemap source with -2 offset
       .replace('{z-2}', (tile.z - 2).toString())
       .replace('{x}', tile.x.toString())
       .replace('{y}', tile.y.toString())
       .replace('{-y}', (Math.pow(2, tile.z) - 1 - tile.y).toString())
+
+    // Support {bbox} (EPSG:4326) and {bbox_3857} (EPSG:3857) for WMS-style sources
+    if (url.includes('{bbox}') || url.includes('{bbox_3857}')) {
+      const [minLon, minLat, maxLon, maxLat] = ChartDownloader.tileToBBox(tile.x, tile.y, tile.z)
+      url = url.replace('{bbox}', `${minLon},${minLat},${maxLon},${maxLat}`)
+      if (url.includes('{bbox_3857}')) {
+        const [mx1, my1] = ChartDownloader.lonLatToMercator(minLon, minLat)
+        const [mx2, my2] = ChartDownloader.lonLatToMercator(maxLon, maxLat)
+        url = url.replace('{bbox_3857}', `${mx1},${my1},${mx2},${my2}`)
+      }
+    }
     const controller = new AbortController()
     const id = setTimeout(() => controller.abort(), timeoutMs)
     try {
@@ -421,7 +432,7 @@ export class ChartDownloader {
 
         for (let x = minX; x <= maxX; x++) {
           for (let y = minY; y <= maxY; y++) {
-            const tileBbox = this.tileToBBox(x, y, z)
+            const tileBbox = ChartDownloader.tileToBBox(x, y, z)
             const tilePoly = this.bboxPolygon(tileBbox)
 
             if (booleanIntersects(feature as Feature, tilePoly)) {
@@ -520,7 +531,7 @@ export class ChartDownloader {
     return [x, y]
   }
 
-  private tileToBBox(x: number, y: number, z: number): BBox {
+  static tileToBBox(x: number, y: number, z: number): BBox {
     const n = 2 ** z
     const lon1 = (x / n) * 360 - 180
     const lat1 =
@@ -529,6 +540,13 @@ export class ChartDownloader {
     const lat2 =
       (Math.atan(Math.sinh(Math.PI * (1 - (2 * (y + 1)) / n))) * 180) / Math.PI
     return [lon1, lat2, lon2, lat1]
+  }
+
+  private static lonLatToMercator(lon: number, lat: number): [number, number] {
+    const x = (lon * 20037508.34) / 180
+    const y =
+      Math.log(Math.tan(((90 + lat) * Math.PI) / 360)) / (Math.PI / 180)
+    return [x, (y * 20037508.34) / 180]
   }
 
   private bboxPolygon(boundingBox: BBox) {
