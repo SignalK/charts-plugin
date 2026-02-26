@@ -70,9 +70,9 @@
                
               </div>
 
-              <div class="job-startstop job-card-actions">
+              <!-- <div class="job-startstop job-card-actions">
                 <button class="btn btn--primary" title="StartStop">Start</button>
-              </div>
+              </div> -->
             </div>
           </div>
         </template>
@@ -89,13 +89,6 @@
           <legend>Region Information</legend>
           <label for="regionName"><strong>Region Name:</strong></label>
           <input type="text" id="regionName" />
-
-          <!-- <label for="regionArea"><strong>Area:</strong></label>
-            <span id="regionArea">0</span> km²
-  
-            <strong>Bounds:</strong>
-            <span id="regionBounds">N/A</span> -->
-
           <button id="saveRegion" class="btn btn--primary">Save</button>
         </fieldset>
 
@@ -116,13 +109,13 @@
           <strong>Options:</strong><br />
           <input type="checkbox" id="refetch" name="refetch" value="refetch" />
           <label for="refetch">
-            Fetch all tiles (Including tiles previously cached)</label
+            Refresh all tiles</label
           ><br />
           <input type="checkbox" id="mbtiles" name="mbtiles" value="mbtiles" />
           <label for="mbtiles"> Create a separate mbtiles for this region</label
           ><br />
           <input type="checkbox" id="vacuum" name="vacuum" value="vacuum" />
-          <label for="vacuum"> Vacuum the mbtiles file after seeding</label
+          <label for="vacuum"> Compact file after seeding</label
           ><br />
           <!-- <div class="modal-actions"> -->
           <!-- <button id="cancelButton" type="button">Cancel</button> -->

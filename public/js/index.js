@@ -1,13 +1,15 @@
 var map
+var settings
 var layerControl
 var drawnItems
 var activeRegionLayer = null
 var isDeleting = false
 let jobsPollInterval = null
+let jobsControl = null
 
 document.addEventListener('DOMContentLoaded', async () => {
   await setupCharts()
-  setupDragAndDrop()
+
   setupRegions()
 })
 
@@ -29,10 +31,32 @@ function normalizePolygon(layer) {
   layer.setLatLngs(latlngs)
 }
 
+function saveSettings()
+{
+  localStorage.setItem('settings', JSON.stringify(settings))
+}
+
 async function setupCharts() {
-  map = L.map('map', {
-    zoomControl: true
-  }).setView([39.8283, -98.5795], 5)
+  // map = L.map('map', {
+  //   zoomControl: true
+  // }).setView([39.8283, -98.5795], 5)
+  settings = JSON.parse(localStorage.getItem('settings'));
+  console.log(settings)
+
+  map = L.map('map').setView(
+      settings ? settings.map.center : [0, 0],
+      settings ? settings.map.zoomLevel : 8
+  );
+
+  map.on('moveend', function () {
+    const center = map.getCenter();
+    const zoom = map.getZoom();
+    settings.map = {
+        center: [center.lat, center.lng],
+        zoomLevel: zoom
+      }
+    saveSettings();
+  });
 
   // Layer to store drawn shapes
   drawnItems = new L.FeatureGroup()
@@ -74,22 +98,45 @@ async function setupCharts() {
 
   map.addControl(drawControl)
 
-  const jobsControl = L.control({ position: 'topright' })
+  jobsControl = L.control({ position: 'topright' })
 
   jobsControl.onAdd = function () {
     const btn = L.DomUtil.create(
       'button',
       'leaflet-bar leaflet-control leaflet-control-custom leaflet-control-button leaflet-button'
     )
-    btn.innerHTML = '🧾'
+    btn.innerHTML = '<img src="leaflet/images/downloads.png" alt="Active seeding jobs" style="width:16px;height:16px;">'
 
+     // Create badge
+    const badge = L.DomUtil.create('span', 'jobs-badge', btn)
+    badge.innerText = '0' // initial value
     // Prevent map drag when clicking
     L.DomEvent.disableClickPropagation(btn)
 
     btn.onclick = toggleJobsModal
+    // Store reference so we can update it later
+    jobsControl._badge = badge
+    updateJobsBadge(0) // hide badge initially
     return btn
   }
   jobsControl.addTo(map)
+
+  const helpControl = L.control({ position: 'bottomright' })
+
+  helpControl.onAdd = function () {
+    const btn = L.DomUtil.create(
+      'button',
+      'leaflet-bar leaflet-control leaflet-control-custom leaflet-control-button leaflet-button'
+    )
+    btn.innerHTML = '<img src="leaflet/images/lifebuoy.png" alt="Help" style="width:16px;height:16px;">'
+
+    // Prevent map drag when clicking
+    L.DomEvent.disableClickPropagation(btn)
+
+    btn.onclick = toggleHelpModal
+    return btn
+  }
+  helpControl.addTo(map)
 
   map.on(L.Draw.Event.CREATED, (e) => {
     const layer = e.layer
@@ -166,10 +213,12 @@ async function setupCharts() {
           layer = L.tileLayer(`${info.url}`, {
             maxZoom: info.maxZoom || 19,
             minZoom: info.minZoom || 1,
-            checked: false
+            checked: settings.selections.charts.includes(info.name)
           })
           layer.addTo(map)
-          map.removeLayer(layer) // Start with all layers off
+          if (!settings.selections.charts.includes(info.name)){
+            map.removeLayer(layer)
+          }
           overlayMaps[info.name || id] = layer
         }
       })
@@ -181,6 +230,35 @@ async function setupCharts() {
   } catch (err) {
     console.error('Error loading maps:', err)
   }
+
+  map.on('overlayadd', function (e) {
+    const name = e.name;
+
+    if (!settings.selections.charts.includes(name)) {
+      settings.selections.charts.push(name);
+    }
+
+    saveSettings();
+  });
+
+  map.on('overlayremove', function (e) {
+    const name = e.name;
+
+    settings.selections.charts =
+      settings.selections.charts.filter(c => c !== name);
+
+    saveSettings();
+  });
+
+  jobsPollInterval = setInterval(fetchActiveJobs, 2000)
+  setupDragAndDrop()
+}
+
+// Help
+
+function toggleHelpModal() {
+  let modal = document.getElementById('helpModal')
+  const isHidden = modal.classList.toggle('hidden')
 }
 
 // Jobs
@@ -192,13 +270,13 @@ function toggleJobsModal() {
   if (isHidden) {
     if (!jobsPollInterval) return
 
-    clearInterval(jobsPollInterval)
-    jobsPollInterval = null
+    // clearInterval(jobsPollInterval)
+    // jobsPollInterval = null
   } else {
     if (jobsPollInterval) return // already running
 
     fetchActiveJobs() // fetch immediately
-    jobsPollInterval = setInterval(fetchActiveJobs, 2000)
+    
   }
 }
 
@@ -275,32 +353,32 @@ function createJobCard(job) {
     takeAction(job.id, 'remove')
   })
 
-  const startStopButton = card.querySelector('.job-startstop button')
-  if (job.state === 1) {
-    startStopButton.textContent = 'Stop'
-    startStopButton.title = 'Stop'
-    startStopButton.classList.add('btn--danger')
-    startStopButton.addEventListener('click', () => {
-      takeAction(job.id, 'stop')
-      fetchActiveJobs()
-    })
-  } else if (job.state === 0) {
-    startStopButton.textContent = 'Start'
-    startStopButton.title = 'Start'
-    if (job.type === 1) {
-      startStopButton.addEventListener('click', () => {
-      takeAction(job.id, 'start')
-      fetchActiveJobs()
-    })
-    } else if (job.type === 2) {
-      startStopButton.addEventListener('click', () => {
-      takeAction(job.id, 'delete')
-      fetchActiveJobs()
-    })
-    }
+  // const startStopButton = card.querySelector('.job-startstop button')
+  // if (job.state === 1) {
+  //   startStopButton.textContent = 'Stop'
+  //   startStopButton.title = 'Stop'
+  //   startStopButton.classList.add('btn--danger')
+  //   startStopButton.addEventListener('click', () => {
+  //     takeAction(job.id, 'stop')
+  //     fetchActiveJobs()
+  //   })
+  // } else if (job.state === 0) {
+  //   startStopButton.textContent = 'Start'
+  //   startStopButton.title = 'Start'
+  //   if (job.type === 1) {
+  //     startStopButton.addEventListener('click', () => {
+  //     takeAction(job.id, 'start')
+  //     fetchActiveJobs()
+  //   })
+  //   } else if (job.type === 2) {
+  //     startStopButton.addEventListener('click', () => {
+  //     takeAction(job.id, 'delete')
+  //     fetchActiveJobs()
+  //   })
+  //   }
 
     
-  }
+  // }
 
   fillProgress(card.querySelector('.job-card-progress'), job)
 
@@ -323,16 +401,14 @@ function renderJobs(jobs) {
 }
 
 async function fetchActiveJobs() {
-  // const tbody = document.querySelector('#activeJobsTable tbody')
   try {
     const resp = await fetch('/signalk/chart-tiles/cache/jobs')
     if (!resp.ok) throw new Error('HTTP ' + resp.status)
     const data = await resp.json()
     renderJobs(data)
+    updateJobsBadge(data.filter(item => item.state === 1).length)
   } catch (err) {
     console.error('Error fetching active jobs:', err)
-    // tbody.innerHTML =
-    //   '<tr><td colspan="10" class="muted">Error loading active jobs</td></tr>'
   }
 }
 
@@ -380,6 +456,12 @@ async function createJob(action) {
   closeRegionModal()
 }
 
+function updateJobsBadge(count) {
+  if (!jobsControl._badge) return
+  jobsControl._badge.innerText = count
+  jobsControl._badge.style.display = count > 0 ? 'flex' : 'none'
+}
+
 function takeAction(jobId, action) {
   const serverResponse = document.getElementById('response')
   fetch(`/signalk/chart-tiles/cache/jobs/${jobId}`, {
@@ -412,7 +494,6 @@ function setupRegions() {
     const p = activeRegionLayer.feature.properties
     p.name = regionName.value
     saveRegions()
-    // closeRegionModal()
   }
 }
 
@@ -507,9 +588,6 @@ async function loadRegions() {
       drawnItems.addLayer(layer)
     }
   })
-  if (drawnItems.getLayers().length > 0) {
-    map.fitBounds(drawnItems.getBounds())
-  }
 }
 
 function openRegionModal(layer) {
