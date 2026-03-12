@@ -374,3 +374,15 @@ fieldset div {
 .job-card-actions button {
   flex: 1;
 }
+
+#help .modal-content {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont,
+               "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+.modal-image {
+  display: block;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+}

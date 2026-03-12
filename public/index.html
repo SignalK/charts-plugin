@@ -137,21 +137,92 @@
           <h3>Help</h3>
           <button id="closeHelpModal" onclick="toggleHelpModal()">✖</button>
         </div>
-        <h3>Using the Chart Seeding Addon</h3>
-        <ol>
-          <li>Click on the map to draw a region to seed charts for.</li>
-          <li>
-            In the region dialog, select chart provider, zoom levels and
-            options.
-          </li>
-          <li>Click "Create Seeding Job" to add the job to the job list.</li>
-          <li>
-            Open the job list by clicking on the "Jobs" button to monitor
-            progress.
-          </li>
-          <li>You can start/pause or remove jobs from the job list.</li>
-        </ol>
-      </div>
+
+        <h1 id="using-the-chart-plugin">Using the Chart Plugin</h1>
+<h2 id="overview">Overview</h2>
+<p>The graphical interface provides several tools for navigating the chart, defining cache regions, and managing chart data. The buttons highlighted in the interface correspond to the main controls available to the user.</p>
+<p><img src="images/overview.png" alt="Main UI"></p>
+<h3 id="zoom-controls">Zoom Controls</h3>
+<p>The <strong>Zoom In (+)</strong> and <strong>Zoom Out (−)</strong> buttons allow the user to change the map scale.</p>
+<ul>
+<li><p><strong>Zoom In (+)</strong><br>Increases the zoom level to display more detailed chart information.</p>
+</li>
+<li><p><strong>Zoom Out (−)</strong><br>Decreases the zoom level to show a larger geographic area.</p>
+</li>
+</ul>
+<p>These controls behave similarly to standard map applications. Zooming can also be performed using the mouse scroll wheel.</p>
+<h3 id="region-creation-tools">Region Creation Tools</h3>
+<p>The region creation tools allow the user to define areas of the map for chart caching.</p>
+<ul>
+<li><p><strong>Create Rectangular Region</strong><br>Enables the user to draw a rectangular area on the chart. This region defines the boundaries where chart data should be cached.</p>
+</li>
+<li><p><strong>Create Polygon Region</strong><br>Allows the user to draw a custom polygon by placing multiple points on the map. This is useful when the area of interest does not fit a simple rectangle.</p>
+</li>
+</ul>
+<p>These regions determine which chart tiles or map data will be included in the cache.</p>
+<h3 id="region-editing-tools">Region Editing Tools</h3>
+<p>Once regions are created, they can be modified using the editing tools.</p>
+<ul>
+<li><p><strong>Edit Region</strong><br>Allows the user to modify an existing region by adjusting its shape or vertices.</p>
+</li>
+<li><p><strong>Delete Region</strong><br>Removes the selected region from the map.</p>
+</li>
+</ul>
+<h3 id="active-seeding-jobs">Active Seeding Jobs</h3>
+<p>The <strong>Active Seeding Jobs</strong> button displays currently running caching or seeding processes.</p>
+<p>From this panel, users can monitor the progress of jobs that are downloading or preparing chart data for offline use.</p>
+<h3 id="chart-layers">Chart Layers</h3>
+<p>The <strong>Chart Layers</strong> button opens a layer selection menu.</p>
+<p>Users can enable or disable different chart layers to control what information is visible on the map. Only chart layers that support proxy will be visible in this menu.</p>
+<h3 id="help">Help</h3>
+<p>The <strong>Help</strong> button opens the help overlay shown in the interface.</p>
+<p>This overlay provides a quick visual guide explaining the available controls and their functions.</p>
+<h2 id="region-job-configuration">Region Job Configuration</h2>
+<p>The <strong>Edit Region Job</strong> dialog allows users to configure caching (seeding) settings for a selected region. Seeding downloads chart tiles for the defined region so they are available locally for offline use.</p>
+<p><img src="images/region.png" alt="Region"></p>
+<h3 id="region-information">Region Information</h3>
+<p><code>Region Name</code> field defines the name of the selected region. This name is used to identify the region in the interface and in the list of configured jobs.</p>
+<p><code>Save:</code> button stores any changes made to the region name.</p>
+<h3 id="chart-seeding-configuration">Chart Seeding Configuration</h3>
+<p>This section configures how chart tiles will be downloaded and stored for the selected region.</p>
+<p><code>Select Chart Provider:</code> dropdown allows the user to choose which chart source should be used when downloading tiles. Different providers may supply different chart styles or datasets depending on the configured system.</p>
+<p><code>Minimum Zoom:</code> value defines the lowest zoom level that will be downloaded. Lower zoom levels cover larger geographic areas with fewer tiles and are useful for viewing charts while zoomed far out.</p>
+<p><code>Maximum Zoom:</code> value defines the highest zoom level that will be downloaded. Higher zoom levels contain more detailed chart data but require significantly more tiles and storage space.</p>
+<h4 id="options">Options</h4>
+<p><code>Refresh All Tiles</code> If enabled, the seeding process will re-download tiles even if they already exist in the cache. This is useful when charts have been updated and the local cache needs to be refreshed.</p>
+<p><code>Create a Separate MBTiles for This Region:</code> When enabled, all tiles downloaded for this region will be copied to a dedicated MBTiles database file. First the tiles will be downloaded to the global cache, once the download is complete a new mbtiles file will be created to include the downloaded tiles.</p>
+<p>This can be useful for:</p>
+<ul>
+<li>Sharing maps with outher sailors</li>
+<li>Creating offline maps to be used by other chart plotter software, e.g. OpenCPN</li>
+</ul>
+<p><code>Compact File After Seeding</code> If this option is enabled, the MBTiles database will be compacted after the seeding process finishes. Compaction reduces file size and improves storage efficiency by cleaning up unused database space created during the tile download process.</p>
+<p>⚠️ <strong>Warning:</strong> This will temporarily create a new mbtiles file and copy the tiles to the new database. You must have enough diskspace to perform this operation.</p>
+<h4 id="actions">Actions</h4>
+<p><code>Create Seeding Job</code> button starts a caching job for the selected region using the configured settings. The job will download all tiles required for the region between the selected minimum and maximum zoom levels. Progress and status information can be monitored in the Job Progress panel.</p>
+<p><code>Delete Cached Tiles for This Region:</code> button removes all cached tiles associated with the selected region. This operation frees storage space from the mbtiles but not necesarily the diskspace.</p>
+<p>⚠️ <strong>Warning:</strong> This action permanently deletes the cached data for the region.</p>
+<p>⚠️ <strong>Warning:</strong> Eventhough the tiles are removed from the cache, the database size on disk will not shrink due to how sqlite database are managed. Use compact file after seeding option to free the diskspace.</p>
+<h2 id="job-progress">Job Progress</h2>
+<p>The Job Progress dialog displays the status of active chart seeding jobs.<br>Each job represents a task that downloads chart tiles for a defined region so they are available for offline use. Jobs are ephemeral: If the signalk server is restarted these jobs will also be removed, but the cached tiles will remain in the cache.</p>
+<p><img src="images/jobs.png" alt="Region"></p>
+<hr>
+<h3 id="job-information">Job Information</h3>
+<p>Each job card provides a summary of the seeding operation.</p>
+<p><code>Region:</code> field shows the name of the region associated with the job.<br>This corresponds to the region defined during the region creation or editing process. The line below the region name indicates the chart provider being used to download tiles.</p>
+<p><code>Job Status:</code> indicates the current activity of the job. Possible statuses are: <strong>Seeding</strong> – Tiles are currently being downloaded. and - <strong>Completed</strong> – The job has finished successfully.</p>
+<p><code>Progress Bar:</code> visually represents how much of the job has been completed. The percentage shown next to the bar indicates the proportion of tiles processed relative to the total number of tiles required for the region and zoom levels.</p>
+<p>Each job displays several counters that provide detailed information about the seeding process.</p>
+<p><code>Total:</code> Indicates an estimate of the total number of tiles that must be processed for the job with up to %10 error depending on the size and shape of the region.</p>
+<p><code>Downloaded:</code> Represents the number of tiles successfully retrieved from the chart provider during the current seeding process.</p>
+<p><code>Cached:</code> Indicates the number of tiles that were already present in the cache and did not need to be downloaded again. This can occur when seeding overlaps with previously cached data.</p>
+<p><code>Failed:</code> Represents the number of tiles that could not be downloaded due to network errors, provider issues, or other failures.</p>
+<h3 id="job-controls">Job Controls</h3>
+<p><code>Cancel Job:</code> Each job card contains a <strong>Cancel (×)</strong> button in the upper corner. Pressing this button stops the seeding process for that job. Any tiles that were already downloaded will remain in the cache.</p>
+
+
+
+              </div>
     </div>
 
     <script src="js/index.js"></script>
