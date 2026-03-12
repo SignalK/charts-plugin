@@ -37,10 +37,18 @@ function saveSettings()
 }
 
 async function setupCharts() {
-  // map = L.map('map', {
-  //   zoomControl: true
-  // }).setView([39.8283, -98.5795], 5)
   settings = JSON.parse(localStorage.getItem('settings'));
+  if (!settings) {
+    settings = {
+      map: {
+        center: [0,0],
+        zoomLevel: 3
+      },
+      selections: {
+        charts: []
+      }
+    }
+  }
   console.log(settings)
 
   map = L.map('map').setView(

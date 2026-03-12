@@ -9,7 +9,8 @@ import {
   getTilesForBBox,
   getTilesForGeoJSON,
   TileGeneratorFactory,
-  countTiles
+  countTiles,
+  convertBboxToGeoJSON
 } from './chartDownloaderTileHelpers'
 
 import {
@@ -140,8 +141,12 @@ export class ChartDownloader {
     minZoom: number,
     maxZoom: number
   ): Promise<void> {
+    const geojson = convertBboxToGeoJSON(bbox)
     this.tiles = () => getTilesForBBox(bbox, minZoom, maxZoom)
-
+    this.totalTiles = estimateTilesForGeoJSON(geojson, minZoom, maxZoom)
+    if (this.totalTiles < 10000) {
+      this.totalTiles = countTiles(this.tiles, 11000)
+    }
     this.state = State.Stopped
     this.areaDescription = `BBox: [${bbox
       .map((v) => Number(v).toFixed(3))

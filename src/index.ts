@@ -389,7 +389,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
         const job = await ChartSeedingManager.createJob(
           cachePath,
           provider,
-          options ? options : { refetch: false, mbtiles: true, vacuum: false },
+          options ? options : { refetch: false, mbtiles: false, vacuum: false },
           minZoomParsed,
           maxZoomParsed,
           feature,
@@ -397,7 +397,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
             ? [bbox.minLon, bbox.minLat, bbox.maxLon, bbox.maxLat]
             : undefined
         )
-        if (action === 'start') {
+        if (action === 'start' || bbox) {
           job.seedCache()
         } else if (action === 'delete') {
           job.deleteCache()

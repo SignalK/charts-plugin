@@ -160,34 +160,34 @@ export function convertFeatureToGeoJSON(
  * @param properties - Optional properties to attach to the feature
  * @returns GeoJSON Polygon Feature
  */
-// export function convertBboxToGeoJSON(
-//   bbox: BBox,
-//   properties: Record<string, any> = {}
-// ): FeatureCollection {
-//   const [minLon, minLat, maxLon, maxLat] = bbox
+export function convertBboxToGeoJSON(
+  bbox: BBox,
+  properties: Record<string, any> = {}
+): FeatureCollection {
+  const [minLon, minLat, maxLon, maxLat] = bbox
 
-//   // Polygon coordinates must be an array of linear rings
-//   // First (and only) ring is the outer boundary
-//   const coordinates: number[][][] = [[
-//     [minLon, minLat], // bottom-left
-//     [minLon, maxLat], // top-left
-//     [maxLon, maxLat], // top-right
-//     [maxLon, minLat], // bottom-right
-//     [minLon, minLat]  // close the ring
-//   ]]
+  // Polygon coordinates must be an array of linear rings
+  // First (and only) ring is the outer boundary
+  const coordinates: number[][][] = [[
+    [minLon, minLat], // bottom-left
+    [minLon, maxLat], // top-left
+    [maxLon, maxLat], // top-right
+    [maxLon, minLat], // bottom-right
+    [minLon, minLat]  // close the ring
+  ]]
 
-//   const geojson =  {
-//     type: 'Feature',
-//     geometry: {
-//       type: 'Polygon',
-//       coordinates
-//     },
-//     properties
-//   }
+  const geojson =  {
+    type: 'Feature',
+    geometry: {
+      type: 'Polygon',
+      coordinates
+    },
+    properties
+  }
 
-//   return convertFeatureToGeoJSON(geojson)
+  return convertFeatureToGeoJSON(geojson)
 
-// }
+}
 
 function normalizeGeoJSONLongitudes(
   feature: GeoJSON.Feature<GeoJSON.Geometry>
