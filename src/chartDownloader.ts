@@ -142,7 +142,7 @@ export class ChartDownloader {
     maxZoom: number
   ): Promise<void> {
     const geojson = convertBboxToGeoJSON(bbox)
-    this.tiles = () => getTilesForBBox(bbox, minZoom, maxZoom)
+    this.tiles = () => getTilesForGeoJSON(geojson, minZoom, maxZoom)
     this.totalTiles = estimateTilesForGeoJSON(geojson, minZoom, maxZoom)
     if (this.totalTiles < 10000) {
       this.totalTiles = countTiles(this.tiles, 11000)

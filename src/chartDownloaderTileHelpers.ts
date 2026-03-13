@@ -176,7 +176,7 @@ export function convertBboxToGeoJSON(
     [minLon, minLat]  // close the ring
   ]]
 
-  const geojson =  {
+  const geojson: Feature<Polygon> = {
     type: 'Feature',
     geometry: {
       type: 'Polygon',
@@ -186,7 +186,6 @@ export function convertBboxToGeoJSON(
   }
 
   return convertFeatureToGeoJSON(geojson)
-
 }
 
 function normalizeGeoJSONLongitudes(
