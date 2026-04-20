@@ -79,13 +79,31 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
   let reloadTimer: NodeJS.Timeout | undefined
   let activeChartPaths: string[] = []
   let activeOnlineProviders: { [key: string]: object } = {}
+  // Last scan result, surfaced in the config schema description so the admin
+  // UI shows per-path counts when the user reopens the plugin config. Issue #8.
+  let lastChartPathCounts: ChartPathCount[] = []
 
   // Check Node version for schema
   const nodeVersion = process.versions.node
   const nodeMajorVersion = parseInt(nodeVersion.split('.')[0] ?? '0')
 
+  // Builds the `chartPaths` description, appending the latest per-path chart
+  // counts when available. The admin UI re-fetches the schema every time the
+  // plugin config page opens, so this text refreshes on reload. Issue #8.
+  const chartPathsDescription = () => {
+    const base = `Add one or more paths to find charts. Defaults to "${defaultChartsPath}"`
+    if (lastChartPathCounts.length === 0) return base
+    const parts = lastChartPathCounts.map(
+      (p) => `${p.chartPath} (${p.count} ${p.count === 1 ? 'chart' : 'charts'})`
+    )
+    return `${base}. Last scan: ${parts.join(', ')}.`
+  }
+
   // ******** REQUIRED PLUGIN DEFINITION *******
-  const CONFIG_SCHEMA = {
+  // Schema is built inside schema() rather than a module-level const, because
+  // chartPaths.description depends on the last scan result, which only exists
+  // after the plugin has run at least once.
+  const buildConfigSchema = () => ({
     title: 'Signal K Charts',
     type: 'object',
     properties: {
@@ -101,7 +119,7 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
       chartPaths: {
         type: 'array',
         title: 'Chart paths',
-        description: `Add one or more paths to find charts. Defaults to "${defaultChartsPath}"`,
+        description: chartPathsDescription(),
         items: {
           type: 'string',
           title: 'Path',
@@ -212,14 +230,14 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
         }
       }
     }
-  }
+  })
 
   const CONFIG_UISCHEMA = {}
 
   const plugin: Plugin = {
     id: 'charts',
     name: 'Signal K Charts',
-    schema: () => CONFIG_SCHEMA,
+    schema: () => buildConfigSchema(),
     uiSchema: () => CONFIG_UISCHEMA,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     start: (settings: any) => {
@@ -347,6 +365,7 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
         newCharts[id] = chart
       }
     }
+    lastChartPathCounts = perPath
     app.debug(
       `Chart plugin: Found ${
         Object.keys(newCharts).length
