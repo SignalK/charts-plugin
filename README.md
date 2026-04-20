@@ -1,5 +1,9 @@
 # Signal K server Charts plugin
 
+[![CI](https://github.com/SignalK/charts-plugin/actions/workflows/ci.yml/badge.svg)](https://github.com/SignalK/charts-plugin/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/@signalk/charts-plugin.svg)](https://www.npmjs.com/package/@signalk/charts-plugin)
+[![License](https://img.shields.io/npm/l/@signalk/charts-plugin.svg)](https://github.com/SignalK/charts-plugin/blob/master/LICENSE)
+
 Signal K Node server plugin to provide chart metadata, such as name, description and location of the actual chart tile data.
 
 Chart metadata is derived from the following supported chart file types:
