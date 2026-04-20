@@ -1,7 +1,6 @@
 import path from 'path'
 import * as xml2js from 'xml2js'
 import { Dirent, promises as fs } from 'fs'
-import * as _ from 'lodash'
 import pLimit from 'p-limit'
 import { ChartProvider } from './types'
 import { promisify } from 'util'
@@ -127,7 +126,11 @@ function openMbtilesFile(file: string, filename: string) {
     })
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .then((res: any) => {
-        if (_.isEmpty(res.metadata) || res.metadata.bounds === undefined) {
+        if (
+          !res.metadata ||
+          Object.keys(res.metadata).length === 0 ||
+          res.metadata.bounds === undefined
+        ) {
           return null
         }
         const identifier = filename.replace(/\.mbtiles$/i, '')
@@ -226,13 +229,13 @@ function parseTilemapResource(tilemapResource: string) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .then((parsed: any) => {
         const result = parsed.TileMap
-        const name = _.get(result, 'Title.0')
-        const format = _.get(result, 'TileFormat.0.$.extension')
-        const scale = _.get(result, 'Metadata.0.$.scale')
-        const bbox = _.get(result, 'BoundingBox.0.$')
-        const zoomLevels = _.map(
-          _.get(result, 'TileSets.0.TileSet') || [],
-          (set) => parseInt(_.get(set, '$.href'))
+        const name = result?.Title?.[0]
+        const format = result?.TileFormat?.[0]?.$?.extension
+        const scale = result?.Metadata?.[0]?.$?.scale
+        const bbox = result?.BoundingBox?.[0]?.$
+        const zoomLevels: number[] = (result?.TileSets?.[0]?.TileSet || []).map(
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (set: any) => parseInt(set?.$?.href)
         )
         const res: ChartProvider = {
           _flipY: true,
@@ -246,8 +249,8 @@ function parseTilemapResource(tilemapResource: string) {
                 parseFloat(bbox.maxy)
               ]
             : undefined,
-          minzoom: !_.isEmpty(zoomLevels) ? _.min(zoomLevels) : undefined,
-          maxzoom: !_.isEmpty(zoomLevels) ? _.max(zoomLevels) : undefined,
+          minzoom: zoomLevels.length ? Math.min(...zoomLevels) : undefined,
+          maxzoom: zoomLevels.length ? Math.max(...zoomLevels) : undefined,
           format,
           type: 'tilelayer',
           scale: parseInt(scale) || 250000,
@@ -267,9 +270,9 @@ function parseMetadataJson(metadataJson: string) {
     })
     .then((metadata) => {
       function parseBounds(bounds: number[] | string) {
-        if (_.isString(bounds)) {
-          return _.map(bounds.split(','), (bound) => parseFloat(_.trim(bound)))
-        } else if (_.isArray(bounds) && bounds.length === 4) {
+        if (typeof bounds === 'string') {
+          return bounds.split(',').map((bound) => parseFloat(bound.trim()))
+        } else if (Array.isArray(bounds) && bounds.length === 4) {
           return bounds
         } else {
           return undefined
@@ -294,5 +297,5 @@ function parseMetadataJson(metadataJson: string) {
 
 function parseIntIfNotUndefined(val: string) {
   const parsed = parseInt(val)
-  return _.isFinite(parsed) ? parsed : undefined
+  return Number.isFinite(parsed) ? parsed : undefined
 }
