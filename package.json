@@ -64,7 +64,7 @@
     "chai": "4.1.2",
     "chai-http": "^4.2.1",
     "eslint": "^8.34.0",
-    "eslint-config-prettier": "^8.6.0",
+    "eslint-config-prettier": "^10.1.8",
     "express": "^4.20.0",
     "mocha": "^11.7.1",
     "prettier": "^2.8.4",
