@@ -46,15 +46,16 @@ describe('GET /resources/charts', () => {
       testServer = server
     })
   )
-  afterEach(done => {
+  afterEach((done) => {
     if (plugin && plugin.stop) plugin.stop()
     testServer.close(() => done())
   })
 
   it('returns all charts for default path', () => {
-    return plugin.start({})
+    return plugin
+      .start({})
       .then(() => get(testServer, '/signalk/v1/api/resources/charts'))
-      .then(result => {
+      .then((result) => {
         expect(result.status).to.equal(200)
         const resultCharts = result.body
         expect(_.keys(resultCharts).length).to.deep.equal(3)
@@ -63,9 +64,12 @@ describe('GET /resources/charts', () => {
   })
 
   it('handle canonical paths', () => {
-    return plugin.start({chartPaths: ['charts', path.resolve(__dirname, 'charts').toString()]})
+    return plugin
+      .start({
+        chartPaths: ['charts', path.resolve(__dirname, 'charts').toString()]
+      })
       .then(() => get(testServer, '/signalk/v1/api/resources/charts'))
-      .then(result => {
+      .then((result) => {
         expect(result.status).to.equal(200)
         const resultCharts = result.body
         expect(_.keys(resultCharts).length).to.deep.equal(3)
@@ -73,9 +77,10 @@ describe('GET /resources/charts', () => {
   })
 
   it('returns all charts for multiple paths', () => {
-    return plugin.start({chartPaths: ['charts', 'charts-2']})
+    return plugin
+      .start({ chartPaths: ['charts', 'charts-2'] })
       .then(() => get(testServer, '/signalk/v1/api/resources/charts'))
-      .then(result => {
+      .then((result) => {
         expect(result.status).to.equal(200)
         const resultCharts = result.body
         expect(_.keys(resultCharts).length).to.deep.equal(4)
@@ -84,20 +89,31 @@ describe('GET /resources/charts', () => {
   })
 
   it('returns empty charts for custom path', () => {
-    return plugin.start({chartPaths: ['../src/']})
+    return plugin
+      .start({ chartPaths: ['../src/'] })
       .then(() => get(testServer, '/signalk/v1/api/resources/charts'))
-      .then(result => {
+      .then((result) => {
         expect(result.status).to.equal(200)
         expect(result.body).to.deep.equal({})
       })
   })
 
   it('returns online chart providers', () => {
-    return plugin.start({chartPaths: ['charts'], onlineChartProviders: [
-        {name: 'Test Name', minzoom: 2, maxzoom: 15, format: 'jpg', url: 'https://example.com'}
-      ]})
+    return plugin
+      .start({
+        chartPaths: ['charts'],
+        onlineChartProviders: [
+          {
+            name: 'Test Name',
+            minzoom: 2,
+            maxzoom: 15,
+            format: 'jpg',
+            url: 'https://example.com'
+          }
+        ]
+      })
       .then(() => get(testServer, '/signalk/v1/api/resources/charts'))
-      .then(result => {
+      .then((result) => {
         expect(result.body['test-name']).to.deep.equal({
           bounds: [-180, -90, 180, 90],
           format: 'jpg',
@@ -109,7 +125,7 @@ describe('GET /resources/charts', () => {
           proxy: false,
           remoteUrl: null,
           scale: 250000,
-          "style": null,
+          style: null,
           tilemapUrl: 'https://example.com',
           type: 'tilelayer',
           chartLayers: null
@@ -119,23 +135,28 @@ describe('GET /resources/charts', () => {
 
   it('returns one chart', () => {
     const identifier = 'test'
-    return plugin.start({})
-      .then(() => get(testServer, `/signalk/v1/api/resources/charts/${identifier}`))
-      .then(result => {
+    return plugin
+      .start({})
+      .then(() =>
+        get(testServer, `/signalk/v1/api/resources/charts/${identifier}`)
+      )
+      .then((result) => {
         expect(result.status).to.equal(200)
-        expect(result.body).to.deep.equal(expectedCharts[identifier as keyof typeof expectedCharts])
+        expect(result.body).to.deep.equal(
+          expectedCharts[identifier as keyof typeof expectedCharts]
+        )
       })
   })
 
   it('returns 404 for unknown chart', () => {
-    return plugin.start({})
+    return plugin
+      .start({})
       .then(() => get(testServer, `/signalk/v1/api/resources/charts/foo`))
-      .catch(e => e.response)
-      .then(result => {
+      .catch((e) => e.response)
+      .then((result) => {
         expect(result.status).to.equal(404)
       })
   })
-
 })
 
 describe('GET /signalk/chart-tiles/:identifier/:z/:x/:y', () => {
@@ -148,51 +169,68 @@ describe('GET /signalk/chart-tiles/:identifier/:z/:x/:y', () => {
       testServer = server
     })
   )
-  afterEach(done => {
+  afterEach((done) => {
     if (plugin && plugin.stop) plugin.stop()
     testServer.close(() => done())
   })
 
   it('returns correct tile from MBTiles file', () => {
-    return plugin.start({})
+    return plugin
+      .start({})
       .then(() => get(testServer, '/signalk/chart-tiles/test/4/5/6'))
-      .then(response => {
+      .then((response) => {
         // unpacked-tiles contains same tiles as the test.mbtiles file
-        expectTileResponse(response, 'charts/unpacked-tiles/4/5/6.png', 'image/png')
+        expectTileResponse(
+          response,
+          'charts/unpacked-tiles/4/5/6.png',
+          'image/png'
+        )
       })
   })
 
   it('returns correct tile from directory', () => {
-    return plugin.start({})
+    return plugin
+      .start({})
       .then(() => get(testServer, '/signalk/chart-tiles/unpacked-tiles/4/4/6'))
-      .then(response => {
-        expectTileResponse(response, 'charts/unpacked-tiles/4/4/6.png', 'image/png')
+      .then((response) => {
+        expectTileResponse(
+          response,
+          'charts/unpacked-tiles/4/4/6.png',
+          'image/png'
+        )
       })
   })
 
   it('returns correct tile from TMS directory', () => {
     // Y-coordinate flipped
-    return plugin.start({})
+    return plugin
+      .start({})
       .then(() => get(testServer, '/signalk/chart-tiles/tms-tiles/5/17/10'))
-      .then(response => {
-        expectTileResponse(response, 'charts/tms-tiles/5/17/21.png', 'image/png')
+      .then((response) => {
+        expectTileResponse(
+          response,
+          'charts/tms-tiles/5/17/21.png',
+          'image/png'
+        )
       })
   })
 
   it('returns 404 for missing tile', () => {
-    return plugin.start({})
+    return plugin
+      .start({})
       .then(() => get(testServer, '/signalk/chart-tiles/tms-tiles/5/55/10'))
-      .catch(e => e.response)
-      .then(response => {
+      .catch((e) => e.response)
+      .then((response) => {
         expect(response.status).to.equal(404)
       })
   })
 
   it('returns 404 for wrong chart identifier', () => {
-    return plugin.start({})
+    return plugin
+      .start({})
       .then(() => get(testServer, '/signalk/chart-tiles/foo/4/4/6'))
-      .catch(e => e.response)
-      .then(response => {
+      .catch((e) => e.response)
+      .then((response) => {
         expect(response.status).to.equal(404)
       })
   })
@@ -213,7 +251,7 @@ describe('chart folder watcher', function () {
       tmpDir = fs.mkdtempSync(path.join(TMP_BASE, 'watch-'))
     })
   })
-  afterEach(done => {
+  afterEach((done) => {
     if (plugin && plugin.stop) plugin.stop()
     testServer.close(() => {
       // Give Windows a moment to release any file handles we just closed.
@@ -323,7 +361,7 @@ describe('tile cache HTTP endpoints', () => {
       testServer = server
     })
   )
-  afterEach(done => {
+  afterEach((done) => {
     if (plugin && plugin.stop) plugin.stop()
     testServer.close(() => done())
   })
@@ -333,8 +371,11 @@ describe('tile cache HTTP endpoints', () => {
     const res = await chai
       .request(`http://localhost:${serverPort(testServer)}`)
       .post('/signalk/chart-tiles/cache/does-not-exist')
-      .send({ maxZoom: '5', bbox: { minLon: 0, minLat: 0, maxLon: 1, maxLat: 1 } })
-      .catch(e => e.response)
+      .send({
+        maxZoom: '5',
+        bbox: { minLon: 0, minLat: 0, maxLon: 1, maxLat: 1 }
+      })
+      .catch((e) => e.response)
     expect(res.status).to.equal(404)
   })
 
@@ -344,7 +385,7 @@ describe('tile cache HTTP endpoints', () => {
       .request(`http://localhost:${serverPort(testServer)}`)
       .post('/signalk/chart-tiles/cache/proxy-test')
       .send({ bbox: { minLon: 0, minLat: 0, maxLon: 1, maxLat: 1 } })
-      .catch(e => e.response)
+      .catch((e) => e.response)
     expect(res.status).to.equal(400)
   })
 
@@ -354,7 +395,7 @@ describe('tile cache HTTP endpoints', () => {
       .request(`http://localhost:${serverPort(testServer)}`)
       .post('/signalk/chart-tiles/cache/proxy-test')
       .send({ maxZoom: '5' })
-      .catch(e => e.response)
+      .catch((e) => e.response)
     expect(res.status).to.equal(400)
   })
 
@@ -363,7 +404,10 @@ describe('tile cache HTTP endpoints', () => {
     const res = await chai
       .request(`http://localhost:${serverPort(testServer)}`)
       .post('/signalk/chart-tiles/cache/proxy-test')
-      .send({ maxZoom: '5', bbox: { minLon: 0, minLat: 0, maxLon: 1, maxLat: 1 } })
+      .send({
+        maxZoom: '5',
+        bbox: { minLon: 0, minLat: 0, maxLon: 1, maxLat: 1 }
+      })
     expect(res.status).to.equal(202)
     expect(res.body).to.include.keys(['id', 'totalTiles', 'status'])
     // Init must have completed before the response: totalTiles is non-zero,
@@ -398,7 +442,7 @@ describe('tile cache HTTP endpoints', () => {
       .request(`http://localhost:${serverPort(testServer)}`)
       .post('/signalk/chart-tiles/cache/jobs/not-a-number')
       .send({ action: 'start' })
-      .catch(e => e.response)
+      .catch((e) => e.response)
     expect(res.status).to.equal(400)
   })
 
@@ -408,7 +452,7 @@ describe('tile cache HTTP endpoints', () => {
       .request(`http://localhost:${serverPort(testServer)}`)
       .post('/signalk/chart-tiles/cache/jobs/99999')
       .send({ action: 'start' })
-      .catch(e => e.response)
+      .catch((e) => e.response)
     expect(res.status).to.equal(404)
   })
 
@@ -417,7 +461,10 @@ describe('tile cache HTTP endpoints', () => {
     const createRes = await chai
       .request(`http://localhost:${serverPort(testServer)}`)
       .post('/signalk/chart-tiles/cache/proxy-test')
-      .send({ maxZoom: '4', bbox: { minLon: 0, minLat: 0, maxLon: 1, maxLat: 1 } })
+      .send({
+        maxZoom: '4',
+        bbox: { minLon: 0, minLat: 0, maxLon: 1, maxLat: 1 }
+      })
     expect(createRes.status).to.equal(202)
     const jobId = createRes.body.id
 
@@ -425,7 +472,7 @@ describe('tile cache HTTP endpoints', () => {
       .request(`http://localhost:${serverPort(testServer)}`)
       .post(`/signalk/chart-tiles/cache/jobs/${jobId}`)
       .send({})
-      .catch(e => e.response)
+      .catch((e) => e.response)
     expect(res.status).to.equal(400)
   })
 
@@ -434,25 +481,35 @@ describe('tile cache HTTP endpoints', () => {
     const createRes = await chai
       .request(`http://localhost:${serverPort(testServer)}`)
       .post('/signalk/chart-tiles/cache/proxy-test')
-      .send({ maxZoom: '4', bbox: { minLon: 0, minLat: 0, maxLon: 1, maxLat: 1 } })
+      .send({
+        maxZoom: '4',
+        bbox: { minLon: 0, minLat: 0, maxLon: 1, maxLat: 1 }
+      })
     const jobId = createRes.body.id
 
     const res = await chai
       .request(`http://localhost:${serverPort(testServer)}`)
       .post(`/signalk/chart-tiles/cache/jobs/${jobId}`)
       .send({ action: 'detonate' })
-      .catch(e => e.response)
+      .catch((e) => e.response)
     expect(res.status).to.equal(400)
   })
 })
 
-
-const expectTileResponse = (response: ChaiHttp.Response, expectedTilePath: string, expectedFormat: string) => {
-  const expectedTile = fs.readFileSync(path.resolve(__dirname, expectedTilePath))
+const expectTileResponse = (
+  response: ChaiHttp.Response,
+  expectedTilePath: string,
+  expectedFormat: string
+) => {
+  const expectedTile = fs.readFileSync(
+    path.resolve(__dirname, expectedTilePath)
+  )
   expect(response.status).to.equal(200)
   expect(response.headers['content-type']).to.equal(expectedFormat)
   expect(response.headers['cache-control']).to.equal('public, max-age=7776000')
-  expect(response.body.toString('hex')).to.deep.equal(expectedTile.toString('hex'))
+  expect(response.body.toString('hex')).to.deep.equal(
+    expectedTile.toString('hex')
+  )
 }
 
 interface TestApp extends express.Express {
@@ -464,7 +521,7 @@ interface TestApp extends express.Express {
   setPluginError: (pluginId: string, status: string) => void
 }
 
-const createDefaultApp = (): Promise<{app: TestApp, server: http.Server}> => {
+const createDefaultApp = (): Promise<{ app: TestApp; server: http.Server }> => {
   const app = express() as TestApp
   app.use(bodyParser.json())
   app.config = { configPath: path.resolve(__dirname) }
@@ -482,7 +539,7 @@ const createDefaultApp = (): Promise<{app: TestApp, server: http.Server}> => {
         app.set('port', address.port)
         console.log(`Test server on port ${address.port}`)
       }
-      resolve({app, server})
+      resolve({ app, server })
     })
   })
 }
@@ -493,9 +550,7 @@ const get = (server: http.Server, location: string) => {
     throw new Error('Test server has no address')
   }
   const baseUrl = `http://localhost:${address.port}`
-  return chai
-    .request(baseUrl)
-    .get(location)
+  return chai.request(baseUrl).get(location)
 }
 
 const serverPort = (server: http.Server): number => {

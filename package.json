@@ -9,11 +9,10 @@
     "watch": "npm run build -- -w",
     "start": "npm run build -- -w",
     "prepare": "tsc",
-    "prettier:check": "prettier --check src/",
-    "prettier": "prettier -w src/",
-    "lint": "eslint -c .eslintrc.js --ext .ts --ext .js --fix src/",
-    "format": "npm run prettier && npm run lint",
-    "ci-lint": "eslint -c .eslintrc.js --ext .ts --ext .js src/ && prettier --check src/",
+    "typecheck": "tsc --noEmit",
+    "prettier:check": "prettier --check .",
+    "prettier": "prettier --write .",
+    "format": "npm run prettier",
     "test": "mocha",
     "coverage": "c8 --reporter=text --reporter=lcov npm test",
     "mutation": "stryker run"
@@ -56,19 +55,15 @@
     "@types/express": "^4.17.17",
     "@types/lodash": "^4.14.191",
     "@types/mocha": "^10.0.10",
-    "@types/node": "^18.14.4",
-    "@typescript-eslint/eslint-plugin": "^5.52.0",
-    "@typescript-eslint/parser": "^5.52.0",
+    "@types/node": "^22.10.5",
     "body-parser": "^1.20.3",
     "c8": "^11.0.0",
     "chai": "4.1.2",
     "chai-http": "^4.2.1",
-    "eslint": "^8.34.0",
-    "eslint-config-prettier": "^8.6.0",
     "express": "^4.20.0",
     "mocha": "^11.7.1",
-    "prettier": "^2.8.4",
+    "prettier": "^3.8.2",
     "tsx": "^4.20.3",
-    "typescript": "^4.5.4"
+    "typescript": "^5.9.3"
   }
 }

@@ -7,6 +7,7 @@
 Signal K Node server plugin to provide chart metadata, such as name, description and location of the actual chart tile data.
 
 Chart metadata is derived from the following supported chart file types:
+
 - MBTiles _(.mbtiles)_
 - TMS _(tilemapresource.xml and tiles)_
 
@@ -14,19 +15,18 @@ Additionally, chart metadata can be entered via the plugin configuration for oth
 
 Chart metadata is made available to both v1 and v2 Signal K `resources` api paths.
 
-| Server Version | API | Path |
-|--- |--- |--- |
-| 1.x.x | v1 | `/signalk/v1/api/resources/charts` |
-| 2.x.x | v2 | `/signalk/v2/api/resources/charts` |
+| Server Version | API | Path                               |
+| -------------- | --- | ---------------------------------- |
+| 1.x.x          | v1  | `/signalk/v1/api/resources/charts` |
+| 2.x.x          | v2  | `/signalk/v2/api/resources/charts` |
 
-    
 _Note: Version 2 resource paths will only be made available on Signal K server v2.0.0 and later_
 
 ## Usage
 
 1. Install `@signalk/signalk-charts` from the Signal K Server Appstore
 
-2. Configure the plugin in the Admin UI _(**Server -> Plugin Config -> Signal K Charts**)_ 
+2. Configure the plugin in the Admin UI _(**Server -> Plugin Config -> Signal K Charts**)_
 
 3. Activate the plugin
 
@@ -34,12 +34,11 @@ _Note: Version 2 resource paths will only be made available on Signal K server v
 > On Victron Venus devices you [need to install some dependencies manually](https://github.com/SignalK/charts-plugin/issues/40#issuecomment-3396744642) before installing the plugin.
 
 Chart metadata will then be available to client apps via the resources api `/resources/charts` for example:
+
 - [Freeboard SK](https://www.npmjs.com/package/@signalk/freeboard-sk)
 - [Tuktuk Chart Plotter](https://www.npmjs.com/package/tuktuk-chart-plotter)
 
-
 ## Configuration
-
 
 ### Local Chart Files
 
@@ -47,21 +46,22 @@ To use chart files stored on the Signal K Server the plugin needs to know where 
 are stored to generate the chart metadata.
 
 You can either:
-1. Put the chart files in the default location _(`/home/<user>/.signalk/charts`)_ 
-2. Add configuration entries for the folders where the chart files are stored. 
+
+1. Put the chart files in the default location _(`/home/<user>/.signalk/charts`)_
+2. Add configuration entries for the folders where the chart files are stored.
 
 <img src="https://user-images.githubusercontent.com/1435910/39382493-57c1e4dc-4a6e-11e8-93e1-cedb4c7662f4.png" alt="Chart paths configuration" width="450"/>
 
 The plugin watches each configured chart path and picks up new, renamed, or deleted chart files automatically, including files in nested subdirectories (e.g. `charts/<region>/<chart>.mbtiles`). Changes are applied after a short debounce (5 seconds by default) so bursts of events from file copies and atomic saves are collapsed into a single reload.
 
->**Note:** File-system watching relies on native OS events. On some network mounts (SMB/NFS) events may be missed; if a chart doesn't appear after the debounce window, disable and re-enable the plugin.
-
+> **Note:** File-system watching relies on native OS events. On some network mounts (SMB/NFS) events may be missed; if a chart doesn't appear after the debounce window, disable and re-enable the plugin.
 
 ### Online chart providers
 
 If your chart source is not local to the Signal K Server you can add "Online Chart Providers" and enter the required charts metadata for the source.
 
 You will need to provide the following information:
+
 1. A chart name for client applications to display
 2. The URL to the chart source
 3. Select the chart image format
@@ -81,15 +81,15 @@ A proxy for online charts can be created using the "Proxy through SignalK server
 
 The following placeholders are substituted in the chart URL when the proxy fetches each tile:
 
-| Placeholder | Replaced with |
-|---|---|
-| `{z}` | Tile zoom level |
-| `{x}` | Tile column |
-| `{y}` | Tile row (XYZ / Google / OSM scheme, origin at top-left) |
-| `{-y}` | Tile row flipped to TMS scheme (origin at bottom-left) |
-| `{z-2}` | Zoom minus 2, for NOAA WMTS sources served as a tilemap |
-| `{bbox}` | Tile bounds in EPSG:4326, as `minLon,minLat,maxLon,maxLat` (WMS 1.1.1 axis order) |
-| `{bbox_3857}` | Tile bounds in EPSG:3857 / Web Mercator meters, as `minX,minY,maxX,maxY` |
+| Placeholder   | Replaced with                                                                     |
+| ------------- | --------------------------------------------------------------------------------- |
+| `{z}`         | Tile zoom level                                                                   |
+| `{x}`         | Tile column                                                                       |
+| `{y}`         | Tile row (XYZ / Google / OSM scheme, origin at top-left)                          |
+| `{-y}`        | Tile row flipped to TMS scheme (origin at bottom-left)                            |
+| `{z-2}`       | Zoom minus 2, for NOAA WMTS sources served as a tilemap                           |
+| `{bbox}`      | Tile bounds in EPSG:4326, as `minLon,minLat,maxLon,maxLat` (WMS 1.1.1 axis order) |
+| `{bbox_3857}` | Tile bounds in EPSG:3857 / Web Mercator meters, as `minX,minY,maxX,maxY`          |
 
 `{bbox}` and `{bbox_3857}` make it possible to proxy and cache WMS sources that do not offer an XYZ endpoint. Prefer `{bbox_3857}` with WMS 1.3.0 endpoints, because WMS 1.3.0 requires `lat,lon` axis order for geographic CRSes such as EPSG:4326 and `{bbox}` always emits `lon,lat`.
 
@@ -107,10 +107,10 @@ https://gis.charttools.noaa.gov/arcgis/rest/services/MCS/NOAAChartDisplay/MapSer
 - Online [TMS](https://wiki.osgeo.org/wiki/Tile_Map_Service_Specification)
 
 Publicly available MBTiles charts can be found from:
+
 - [NOAA Nautical charts](https://distribution.charts.noaa.gov/ncds/index.html)
 - [Finnish Transport Agency nautical charts](https://github.com/vokkim/rannikkokartat-mbtiles)
 - [Signal K World Coastline Map](https://github.com/netAction/signalk-world-coastline-map), download [MBTiles release](https://github.com/netAction/signalk-world-coastline-map/releases/download/v1.0/signalk-world-coastline-map-database.tgz)
-
 
 ---
 
@@ -121,17 +121,18 @@ Plugin adds support for `/resources/charts` endpoints described in [Signal K spe
 #### List available charts
 
 ```bash
-GET /signalk/v2/api/resources/charts/` 
+GET /signalk/v2/api/resources/charts/`
 ```
 
 #### Return metadata for selected chart
 
 ```bash
 
-GET /signalk/v2/api/resources/charts/${identifier}` 
+GET /signalk/v2/api/resources/charts/${identifier}`
 ```
 
 #### Chart Tiles
+
 Chart tiles are retrieved using the url defined in the chart metadata.
 
 For local chart files located in the Chart Path(s) defined in the plugin configuration, the url will be:
@@ -140,8 +141,8 @@ For local chart files located in the Chart Path(s) defined in the plugin configu
 /signalk/chart-tiles/${identifier}/${z}/${x}/${y}
 ```
 
-License
--------
+## License
+
 Copyright 2018 Mikko Vesikkala
 
 Licensed under the Apache License, Version 2.0 (the "License");
