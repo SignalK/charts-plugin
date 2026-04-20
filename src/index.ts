@@ -573,7 +573,7 @@ const ensureDirectoryExists = (path: string) => {
   }
 }
 
-const serveTileFromFilesystem = (
+const serveTileFromFilesystem = async (
   res: Response,
   provider: ChartProvider,
   z: number,
@@ -592,12 +592,12 @@ const serveTileFromFilesystem = (
     `${z}/${x}/${_flipY ? flippedY : y}.${normalizedFormat}`
   )
   try {
-    const stats = fs.statSync(file)
+    const stats = await fs.promises.stat(file)
     if (!stats.isFile()) {
       res.sendStatus(404)
       return
     }
-    fs.accessSync(file, fs.constants.R_OK)
+    await fs.promises.access(file, fs.constants.R_OK)
   } catch {
     res.sendStatus(404)
     return

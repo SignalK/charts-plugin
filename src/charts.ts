@@ -1,6 +1,6 @@
 import path from 'path'
 import * as xml2js from 'xml2js'
-import { Dirent, promises as fs } from 'fs'
+import { promises as fs } from 'fs'
 import * as _ from 'lodash'
 import { ChartProvider } from './types'
 import { promisify } from 'util'
