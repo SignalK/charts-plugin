@@ -4,7 +4,7 @@
   "reporters": ["clear-text", "progress", "html"],
   "testRunner": "mocha",
   "mochaOptions": {
-    "spec": ["test/**/*.js"]
+    "spec": ["test/**/*.ts"]
   },
   "coverageAnalysis": "perTest",
   "mutate": ["src/**/*.ts"],
