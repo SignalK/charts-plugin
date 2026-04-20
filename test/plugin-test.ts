@@ -18,13 +18,29 @@ import chaiHttp from 'chai-http'
 // it up.
 process.env.SK_CHARTS_RELOAD_DEBOUNCE_MS = '150'
 
-import Plugin = require('../plugin/index')
+import Plugin = require('../src/index')
 import expectedCharts from './expected-charts.json'
 
 chai.use(chaiHttp)
 const expect = chai.expect
 
-type PluginInstance = ReturnType<typeof Plugin>
+// The Plugin interface from @signalk/server-api types `start` as
+// `(config, restart) => void`, but charts-plugin's real implementation
+// is async (the tests sequence on the returned promise). Wrap the type
+// here so the test file can await / chain `.then` without fighting the
+// upstream declaration.
+type PluginInstance = {
+  start: (settings: object) => Promise<void>
+  stop: () => void
+}
+
+// TestApp intentionally omits most of ServerAPI since these are
+// integration tests that exercise only the HTTP surface, not the
+// resource APIs. Cast through `unknown` to sidestep the full interface.
+const asPluginApp = (app: TestApp): PluginInstance =>
+  Plugin(
+    app as unknown as Parameters<typeof Plugin>[0]
+  ) as unknown as PluginInstance
 
 // Slightly larger than the debounce, plus slack for the filesystem event to
 // propagate and the reload to complete.
@@ -42,7 +58,7 @@ describe('GET /resources/charts', () => {
 
   beforeEach(() =>
     createDefaultApp().then(({ app, server }) => {
-      plugin = Plugin(app)
+      plugin = asPluginApp(app)
       testServer = server
     })
   )
@@ -165,7 +181,7 @@ describe('GET /signalk/chart-tiles/:identifier/:z/:x/:y', () => {
 
   beforeEach(() =>
     createDefaultApp().then(({ app, server }) => {
-      plugin = Plugin(app)
+      plugin = asPluginApp(app)
       testServer = server
     })
   )
@@ -246,7 +262,7 @@ describe('chart folder watcher', function () {
   beforeEach(() => {
     fs.mkdirSync(TMP_BASE, { recursive: true })
     return createDefaultApp().then(({ app, server }) => {
-      plugin = Plugin(app)
+      plugin = asPluginApp(app)
       testServer = server
       tmpDir = fs.mkdtempSync(path.join(TMP_BASE, 'watch-'))
     })
@@ -357,7 +373,7 @@ describe('tile cache HTTP endpoints', () => {
 
   beforeEach(() =>
     createDefaultApp().then(({ app, server }) => {
-      plugin = Plugin(app)
+      plugin = asPluginApp(app)
       testServer = server
     })
   )

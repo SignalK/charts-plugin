@@ -4,18 +4,19 @@
   "description": "Signal K plugin to provide chart support for Signal K server",
   "main": "plugin/index.js",
   "scripts": {
-    "build": "tsc",
-    "build-declaration": "tsc --declaration --allowJs false",
+    "build": "tsc -p tsconfig.build.json",
+    "clean": "rimraf plugin",
+    "prebuild": "npm run clean",
     "watch": "npm run build -- -w",
     "start": "npm run build -- -w",
-    "prepare": "tsc",
     "typecheck": "tsc --noEmit",
     "prettier:check": "prettier --check .",
     "prettier": "prettier --write .",
     "format": "npm run prettier",
     "test": "mocha",
     "coverage": "c8 --reporter=text --reporter=lcov npm test",
-    "mutation": "stryker run"
+    "mutation": "stryker run",
+    "prepublishOnly": "npm run build"
   },
   "license": "Apache-2.0",
   "keywords": [
@@ -63,6 +64,7 @@
     "express": "^4.20.0",
     "mocha": "^11.7.1",
     "prettier": "^3.8.2",
+    "rimraf": "^6.1.3",
     "tsx": "^4.20.3",
     "typescript": "^5.9.3"
   }
