@@ -1,4 +1,4 @@
-import chai from 'chai'
+import { expect } from 'chai'
 import {
   WEB_MERCATOR_HALF_EXTENT_M,
   WEB_MERCATOR_MAX_LAT,
@@ -6,8 +6,6 @@ import {
   lonLatToMercator,
   lonLatToTile
 } from '../src/projection'
-
-const expect = chai.expect
 
 const approx = (actual: number, expected: number, tolerance = 1e-6) => {
   expect(

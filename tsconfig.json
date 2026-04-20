@@ -2,32 +2,33 @@
   "compilerOptions": {
     "target": "ES2022",
     "module": "commonjs",
-    "outDir": "./plugin",
-    "esModuleInterop": true,
-    "strict": true,
-    "allowJs": true,
-    "allowSyntheticDefaultImports": true,
-    "resolveJsonModule": true,
-    "composite": true,
-    "rootDir": "src",
-    "skipLibCheck": true
-  },
-  "include": ["./src/**/*"],
-  "exclude": ["node_modules"],
-  "typedocOptions": {
-    "mode": "modules",
-    "out": "tsdocs",
-    "exclude": ["test", "node_modules"],
-    "theme": "default",
-    "ignoreCompilerErrors": true,
-    "excludePrivate": true,
-    "excludeNotExported": true,
-    "target": "ES2022",
     "moduleResolution": "node",
-    "preserveConstEnums": true,
+    "lib": ["ES2022"],
+
+    "strict": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noUncheckedIndexedAccess": true,
+    // Each file must transpile independently (tsx / esbuild / bundler
+    // assumptions). Surfaces edge cases before they break a downstream.
+    "isolatedModules": true,
+
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
     "stripInternal": true,
-    "suppressExcessPropertyErrors": true,
-    "suppressImplicitAnyIndexErrors": true,
-    "module": "commonjs"
-  }
+    "outDir": "plugin",
+    "rootDir": "."
+  },
+  "include": ["src/**/*", "test/**/*.ts"],
+  "exclude": ["node_modules", "plugin", "coverage", "reports", ".stryker-tmp"]
 }

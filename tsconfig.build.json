@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "noUnusedLocals": false,
+    "noUnusedParameters": false
+  },
+  "include": ["src/**/*"],
+  "exclude": [
+    "node_modules",
+    "plugin",
+    "coverage",
+    "reports",
+    ".stryker-tmp",
+    "test"
+  ]
+}
