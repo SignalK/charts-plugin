@@ -383,8 +383,8 @@ describe('tile cache HTTP endpoints', () => {
 
   it('POST /cache/:identifier returns 404 when the provider is unknown', async () => {
     await plugin.start({ onlineChartProviders: [proxyProvider] })
-    const res = await chai
-      .request(`http://localhost:${serverPort(testServer)}`)
+    const res = await chai.request
+      .execute(`http://localhost:${serverPort(testServer)}`)
       .post('/signalk/chart-tiles/cache/does-not-exist')
       .send({
         maxZoom: '5',
@@ -396,8 +396,8 @@ describe('tile cache HTTP endpoints', () => {
 
   it('POST /cache/:identifier returns 400 when maxZoom is missing', async () => {
     await plugin.start({ onlineChartProviders: [proxyProvider] })
-    const res = await chai
-      .request(`http://localhost:${serverPort(testServer)}`)
+    const res = await chai.request
+      .execute(`http://localhost:${serverPort(testServer)}`)
       .post('/signalk/chart-tiles/cache/proxy-test')
       .send({ bbox: { minLon: 0, minLat: 0, maxLon: 1, maxLat: 1 } })
       .catch((e) => e.response)
@@ -406,8 +406,8 @@ describe('tile cache HTTP endpoints', () => {
 
   it('POST /cache/:identifier returns 400 when no region/bbox/tile is given', async () => {
     await plugin.start({ onlineChartProviders: [proxyProvider] })
-    const res = await chai
-      .request(`http://localhost:${serverPort(testServer)}`)
+    const res = await chai.request
+      .execute(`http://localhost:${serverPort(testServer)}`)
       .post('/signalk/chart-tiles/cache/proxy-test')
       .send({ maxZoom: '5' })
       .catch((e) => e.response)
@@ -416,8 +416,8 @@ describe('tile cache HTTP endpoints', () => {
 
   it('POST /cache/:identifier returns 202 with the fully-initialised job info', async () => {
     await plugin.start({ onlineChartProviders: [proxyProvider] })
-    const res = await chai
-      .request(`http://localhost:${serverPort(testServer)}`)
+    const res = await chai.request
+      .execute(`http://localhost:${serverPort(testServer)}`)
       .post('/signalk/chart-tiles/cache/proxy-test')
       .send({
         maxZoom: '5',
@@ -440,8 +440,8 @@ describe('tile cache HTTP endpoints', () => {
     await plugin.start({ onlineChartProviders: [proxyProvider] })
     const maxZoom = '5'
     const bbox = { minLon: 5, minLat: 5, maxLon: 6, maxLat: 6 }
-    const withMinzoom = await chai
-      .request(`http://localhost:${serverPort(testServer)}`)
+    const withMinzoom = await chai.request
+      .execute(`http://localhost:${serverPort(testServer)}`)
       .post('/signalk/chart-tiles/cache/proxy-test')
       .send({ maxZoom, bbox })
     expect(withMinzoom.status).to.equal(202)
@@ -453,8 +453,8 @@ describe('tile cache HTTP endpoints', () => {
 
   it('POST /cache/jobs/:id returns 400 on a non-numeric job id', async () => {
     await plugin.start({ onlineChartProviders: [proxyProvider] })
-    const res = await chai
-      .request(`http://localhost:${serverPort(testServer)}`)
+    const res = await chai.request
+      .execute(`http://localhost:${serverPort(testServer)}`)
       .post('/signalk/chart-tiles/cache/jobs/not-a-number')
       .send({ action: 'start' })
       .catch((e) => e.response)
@@ -463,8 +463,8 @@ describe('tile cache HTTP endpoints', () => {
 
   it('POST /cache/jobs/:id returns 404 for an unknown job', async () => {
     await plugin.start({ onlineChartProviders: [proxyProvider] })
-    const res = await chai
-      .request(`http://localhost:${serverPort(testServer)}`)
+    const res = await chai.request
+      .execute(`http://localhost:${serverPort(testServer)}`)
       .post('/signalk/chart-tiles/cache/jobs/99999')
       .send({ action: 'start' })
       .catch((e) => e.response)
@@ -473,8 +473,8 @@ describe('tile cache HTTP endpoints', () => {
 
   it('POST /cache/jobs/:id returns 400 for a missing action', async () => {
     await plugin.start({ onlineChartProviders: [proxyProvider] })
-    const createRes = await chai
-      .request(`http://localhost:${serverPort(testServer)}`)
+    const createRes = await chai.request
+      .execute(`http://localhost:${serverPort(testServer)}`)
       .post('/signalk/chart-tiles/cache/proxy-test')
       .send({
         maxZoom: '4',
@@ -483,8 +483,8 @@ describe('tile cache HTTP endpoints', () => {
     expect(createRes.status).to.equal(202)
     const jobId = createRes.body.id
 
-    const res = await chai
-      .request(`http://localhost:${serverPort(testServer)}`)
+    const res = await chai.request
+      .execute(`http://localhost:${serverPort(testServer)}`)
       .post(`/signalk/chart-tiles/cache/jobs/${jobId}`)
       .send({})
       .catch((e) => e.response)
@@ -493,8 +493,8 @@ describe('tile cache HTTP endpoints', () => {
 
   it('POST /cache/jobs/:id returns 400 for an unknown action', async () => {
     await plugin.start({ onlineChartProviders: [proxyProvider] })
-    const createRes = await chai
-      .request(`http://localhost:${serverPort(testServer)}`)
+    const createRes = await chai.request
+      .execute(`http://localhost:${serverPort(testServer)}`)
       .post('/signalk/chart-tiles/cache/proxy-test')
       .send({
         maxZoom: '4',
@@ -502,8 +502,8 @@ describe('tile cache HTTP endpoints', () => {
       })
     const jobId = createRes.body.id
 
-    const res = await chai
-      .request(`http://localhost:${serverPort(testServer)}`)
+    const res = await chai.request
+      .execute(`http://localhost:${serverPort(testServer)}`)
       .post(`/signalk/chart-tiles/cache/jobs/${jobId}`)
       .send({ action: 'detonate' })
       .catch((e) => e.response)
@@ -565,7 +565,7 @@ const get = (server: http.Server, location: string) => {
     throw new Error('Test server has no address')
   }
   const baseUrl = `http://localhost:${address.port}`
-  return chai.request(baseUrl).get(location)
+  return chai.request.execute(baseUrl).get(location)
 }
 
 const serverPort = (server: http.Server): number => {
