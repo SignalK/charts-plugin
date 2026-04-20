@@ -1,9 +1,35 @@
 import path from 'path'
-import * as xml2js from 'xml2js'
+import { XMLParser } from 'fast-xml-parser'
 import { Dirent, promises as fs } from 'fs'
 import pLimit from 'p-limit'
 import { ChartProvider } from './types'
-import { promisify } from 'util'
+
+// Parses tilemapresource.xml into a plain object. ignoreAttributes=false and
+// attributeNamePrefix='' drop the default '@_' prefix so XML attributes show
+// up as normal keys. isArray forces TileSet to always be an array even when
+// the XML contains only one, so the zoom-level extraction below doesn't have
+// to special-case the single-element shape.
+// Input  (simplified): <TileMap><Title>Foo</Title>
+//                        <TileFormat extension="png"/>
+//                        <BoundingBox minx="0" miny="0" maxx="1" maxy="1"/>
+//                        <TileSets><TileSet href="4"/><TileSet href="5"/></TileSets>
+//                      </TileMap>
+// Parsed: { TileMap: {
+//            Title: 'Foo',
+//            TileFormat: { extension: 'png' },
+//            BoundingBox: { minx: '0', miny: '0', maxx: '1', maxy: '1' },
+//            TileSets: { TileSet: [ { href: '4' }, { href: '5' } ] }
+//          } }
+const xmlParser = new XMLParser({
+  ignoreAttributes: false,
+  attributeNamePrefix: '',
+  isArray: (name) => name === 'TileSet',
+  // Keep tag text as strings (e.g. "1234" stays "1234", not 1234) so
+  // ChartProvider fields like name/format/scale have stable types regardless
+  // of content.
+  parseTagValue: false,
+  parseAttributeValue: false
+})
 
 // Dynamically load MBTiles to prevent module load failure
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -221,45 +247,38 @@ function directoryToMapInfo(file: string, identifier: string) {
 }
 
 function parseTilemapResource(tilemapResource: string) {
-  const parseString = promisify(xml2js.parseString)
-  return (
-    fs
-      .readFile(tilemapResource)
-      .then((data) => parseString(data))
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .then((parsed: any) => {
-        const result = parsed.TileMap
-        const name = result?.Title?.[0]
-        const format = result?.TileFormat?.[0]?.$?.extension
-        const scale = result?.Metadata?.[0]?.$?.scale
-        const bbox = result?.BoundingBox?.[0]?.$
-        const zoomLevels: number[] = (result?.TileSets?.[0]?.TileSet || []).map(
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (set: any) => parseInt(set?.$?.href)
-        )
-        const res: ChartProvider = {
-          _flipY: true,
-          name,
-          description: name,
-          bounds: bbox
-            ? [
-                parseFloat(bbox.minx),
-                parseFloat(bbox.miny),
-                parseFloat(bbox.maxx),
-                parseFloat(bbox.maxy)
-              ]
-            : undefined,
-          minzoom: zoomLevels.length ? Math.min(...zoomLevels) : undefined,
-          maxzoom: zoomLevels.length ? Math.max(...zoomLevels) : undefined,
-          format,
-          type: 'tilelayer',
-          scale: parseInt(scale) || 250000,
-          identifier: '',
-          _filePath: ''
-        }
-        return res
-      })
-  )
+  return fs.readFile(tilemapResource, 'utf8').then((data) => {
+    const parsed = xmlParser.parse(data)
+    const result = parsed.TileMap
+    const name = result?.Title
+    const format = result?.TileFormat?.extension
+    const scale = result?.Metadata?.scale
+    const bbox = result?.BoundingBox
+    const zoomLevels: number[] = (result?.TileSets?.TileSet || []).map(
+      (set: { href?: string }) => parseInt(set?.href ?? '')
+    )
+    const res: ChartProvider = {
+      _flipY: true,
+      name,
+      description: name,
+      bounds: bbox
+        ? [
+            parseFloat(bbox.minx),
+            parseFloat(bbox.miny),
+            parseFloat(bbox.maxx),
+            parseFloat(bbox.maxy)
+          ]
+        : undefined,
+      minzoom: zoomLevels.length ? Math.min(...zoomLevels) : undefined,
+      maxzoom: zoomLevels.length ? Math.max(...zoomLevels) : undefined,
+      format,
+      type: 'tilelayer',
+      scale: parseInt(scale) || 250000,
+      identifier: '',
+      _filePath: ''
+    }
+    return res
+  })
 }
 
 function parseMetadataJson(metadataJson: string) {
