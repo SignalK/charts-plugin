@@ -9,7 +9,6 @@ import path from 'path'
 import http from 'http'
 import * as _ from 'lodash'
 import express from 'express'
-import bodyParser from 'body-parser'
 import chai from 'chai'
 import chaiHttp from 'chai-http'
 
@@ -539,7 +538,7 @@ interface TestApp extends express.Express {
 
 const createDefaultApp = (): Promise<{ app: TestApp; server: http.Server }> => {
   const app = express() as TestApp
-  app.use(bodyParser.json())
+  app.use(express.json())
   app.config = { configPath: path.resolve(__dirname) }
   app.statusMessage = () => 'started'
   app.error = () => undefined
