@@ -16,6 +16,7 @@ import { polygon } from '@turf/helpers'
 import checkDiskSpace from 'check-disk-space'
 import { ResourcesApi } from '@signalk/server-api'
 import { ChartProvider } from './types'
+import { lonLatToMercator, tileToBBox } from './projection'
 
 export interface Tile {
   x: number
@@ -309,13 +310,23 @@ export class ChartDownloader {
       .replace('{y}', tile.y.toString())
       .replace('{-y}', (Math.pow(2, tile.z) - 1 - tile.y).toString())
 
-    // Support {bbox} (EPSG:4326) and {bbox_3857} (EPSG:3857) for WMS-style sources
+    // Support {bbox} (EPSG:4326) and {bbox_3857} (EPSG:3857) for WMS-style sources.
+    // {bbox} emits minLon,minLat,maxLon,maxLat — this is WMS 1.1.1 order, and also
+    // matches WMS 1.3.0 for projected CRSes. For WMS 1.3.0 with a geographic CRS
+    // (e.g. EPSG:4326) the spec requires lat,lon axis order; prefer {bbox_3857} in
+    // that case, or use a WMS 1.1.1 endpoint.
     if (url.includes('{bbox}') || url.includes('{bbox_3857}')) {
-      const [minLon, minLat, maxLon, maxLat] = ChartDownloader.tileToBBox(tile.x, tile.y, tile.z)
-      url = url.replace('{bbox}', `${minLon},${minLat},${maxLon},${maxLat}`)
+      const [minLon, minLat, maxLon, maxLat] = tileToBBox(
+        tile.x,
+        tile.y,
+        tile.z
+      )
+      if (url.includes('{bbox}')) {
+        url = url.replace('{bbox}', `${minLon},${minLat},${maxLon},${maxLat}`)
+      }
       if (url.includes('{bbox_3857}')) {
-        const [mx1, my1] = ChartDownloader.lonLatToMercator(minLon, minLat)
-        const [mx2, my2] = ChartDownloader.lonLatToMercator(maxLon, maxLat)
+        const [mx1, my1] = lonLatToMercator(minLon, minLat)
+        const [mx2, my2] = lonLatToMercator(maxLon, maxLat)
         url = url.replace('{bbox_3857}', `${mx1},${my1},${mx2},${my2}`)
       }
     }
@@ -432,7 +443,7 @@ export class ChartDownloader {
 
         for (let x = minX; x <= maxX; x++) {
           for (let y = minY; y <= maxY; y++) {
-            const tileBbox = ChartDownloader.tileToBBox(x, y, z)
+            const tileBbox = tileToBBox(x, y, z)
             const tilePoly = this.bboxPolygon(tileBbox)
 
             if (booleanIntersects(feature as Feature, tilePoly)) {
@@ -529,24 +540,6 @@ export class ChartDownloader {
         n
     )
     return [x, y]
-  }
-
-  static tileToBBox(x: number, y: number, z: number): BBox {
-    const n = 2 ** z
-    const lon1 = (x / n) * 360 - 180
-    const lat1 =
-      (Math.atan(Math.sinh(Math.PI * (1 - (2 * y) / n))) * 180) / Math.PI
-    const lon2 = ((x + 1) / n) * 360 - 180
-    const lat2 =
-      (Math.atan(Math.sinh(Math.PI * (1 - (2 * (y + 1)) / n))) * 180) / Math.PI
-    return [lon1, lat2, lon2, lat1]
-  }
-
-  private static lonLatToMercator(lon: number, lat: number): [number, number] {
-    const x = (lon * 20037508.34) / 180
-    const y =
-      Math.log(Math.tan(((90 + lat) * Math.PI) / 360)) / (Math.PI / 180)
-    return [x, (y * 20037508.34) / 180]
   }
 
   private bboxPolygon(boundingBox: BBox) {
