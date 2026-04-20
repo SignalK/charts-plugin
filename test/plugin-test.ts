@@ -1,23 +1,31 @@
-'use strict'
-const fs = require('fs')
-const _ = require('lodash')
-const path = require('path')
-const http = require('http')
-const chai = require('chai')
-const chaiHttp = require('chai-http')
-const express = require('express')
-const expect = chai.expect
-const Plugin = require('../plugin/index')
-const expectedCharts = require('./expected-charts.json')
+/**
+ * Integration tests for the charts plugin. Spins up an Express app,
+ * registers the plugin, issues HTTP requests via chai-http, and asserts
+ * responses against expected fixtures.
+ */
+
+import fs from 'fs'
+import path from 'path'
+import http from 'http'
+import * as _ from 'lodash'
+import express from 'express'
+import bodyParser from 'body-parser'
+import chai from 'chai'
+import chaiHttp from 'chai-http'
+import Plugin = require('../plugin/index')
+import expectedCharts from './expected-charts.json'
 
 chai.use(chaiHttp)
+const expect = chai.expect
+
+type PluginInstance = ReturnType<typeof Plugin>
 
 describe('GET /resources/charts', () => {
-  let plugin
-  let testServer
+  let plugin: PluginInstance
+  let testServer: http.Server
+
   beforeEach(() =>
-    createDefaultApp()
-      .then(({app, server}) => {
+    createDefaultApp().then(({ app, server }) => {
       plugin = Plugin(app)
       testServer = server
     })
@@ -96,7 +104,7 @@ describe('GET /resources/charts', () => {
       .then(() => get(testServer, `/signalk/v1/api/resources/charts/${identifier}`))
       .then(result => {
         expect(result.status).to.equal(200)
-        expect(result.body).to.deep.equal(expectedCharts[identifier])
+        expect(result.body).to.deep.equal(expectedCharts[identifier as keyof typeof expectedCharts])
       })
   })
 
@@ -108,15 +116,15 @@ describe('GET /resources/charts', () => {
         expect(result.status).to.equal(404)
       })
   })
-  
+
 })
 
 describe('GET /signalk/chart-tiles/:identifier/:z/:x/:y', () => {
-  let plugin
-  let testServer
+  let plugin: PluginInstance
+  let testServer: http.Server
+
   beforeEach(() =>
-    createDefaultApp()
-      .then(({app, server}) => {
+    createDefaultApp().then(({ app, server }) => {
       plugin = Plugin(app)
       testServer = server
     })
@@ -133,7 +141,6 @@ describe('GET /signalk/chart-tiles/:identifier/:z/:x/:y', () => {
   })
 
   it('returns correct tile from directory', () => {
-    const expectedTile = fs.readFileSync(path.resolve(__dirname, 'charts/unpacked-tiles/4/4/6.png'))
     return plugin.start({})
       .then(() => get(testServer, '/signalk/chart-tiles/unpacked-tiles/4/4/6'))
       .then(response => {
@@ -142,7 +149,6 @@ describe('GET /signalk/chart-tiles/:identifier/:z/:x/:y', () => {
   })
 
   it('returns correct tile from TMS directory', () => {
-    const expectedTile = fs.readFileSync(path.resolve(__dirname, 'charts/tms-tiles/5/17/21.png'))
     // Y-coordinate flipped
     return plugin.start({})
       .then(() => get(testServer, '/signalk/chart-tiles/tms-tiles/5/17/10'))
@@ -171,7 +177,7 @@ describe('GET /signalk/chart-tiles/:identifier/:z/:x/:y', () => {
 })
 
 
-const expectTileResponse = (response, expectedTilePath, expectedFormat) => {
+const expectTileResponse = (response: ChaiHttp.Response, expectedTilePath: string, expectedFormat: string) => {
   const expectedTile = fs.readFileSync(path.resolve(__dirname, expectedTilePath))
   expect(response.status).to.equal(200)
   expect(response.headers['content-type']).to.equal(expectedFormat)
@@ -179,32 +185,44 @@ const expectTileResponse = (response, expectedTilePath, expectedFormat) => {
   expect(response.body.toString('hex')).to.deep.equal(expectedTile.toString('hex'))
 }
 
-const createDefaultApp = () => {
-  let app = express()
-  app.use(require('body-parser').json())
-  app.debug = (x) => console.log(x)
+interface TestApp extends express.Express {
+  debug: (...msg: unknown[]) => void
+  error: (msg: string) => void
+  config: { configPath: string }
+  statusMessage: () => string
+  setPluginStatus: (pluginId: string, status: string) => void
+  setPluginError: (pluginId: string, status: string) => void
+}
+
+const createDefaultApp = (): Promise<{app: TestApp, server: http.Server}> => {
+  const app = express() as TestApp
+  app.use(bodyParser.json())
   app.config = { configPath: path.resolve(__dirname) }
-
   app.statusMessage = () => 'started'
-  app.error = (msg) => undefined
-  app.debug = (...msg) => undefined
-  app.setPluginStatus = (pluginId, status) => undefined
-  app.setPluginError = (pluginId, status) => undefined
+  app.error = () => undefined
+  app.debug = () => undefined
+  app.setPluginStatus = () => undefined
+  app.setPluginError = () => undefined
 
-
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const server = http.createServer(app)
     server.listen(() => {
-      const {port} = server.address()
-      app.set('port', port)
-      console.log(`Test server on port ${port}`)
+      const address = server.address()
+      if (address && typeof address !== 'string') {
+        app.set('port', address.port)
+        console.log(`Test server on port ${address.port}`)
+      }
       resolve({app, server})
     })
   })
 }
 
-const get = (server, location) => {
-  const baseUrl = `http://localhost:${server.address().port}`
+const get = (server: http.Server, location: string) => {
+  const address = server.address()
+  if (!address || typeof address === 'string') {
+    throw new Error('Test server has no address')
+  }
+  const baseUrl = `http://localhost:${address.port}`
   return chai
     .request(baseUrl)
     .get(location)
