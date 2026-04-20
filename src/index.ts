@@ -254,7 +254,7 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
     }`
     app.debug(`**urlBase** ${urlBase}`)
 
-    activeChartPaths = _.isEmpty(props.chartPaths)
+    activeChartPaths = !props.chartPaths?.length
       ? [defaultChartsPath]
       : resolveUniqueChartPaths(props.chartPaths, configBasePath)
     cachePath = props.cachePath || defaultChartsPath
@@ -708,10 +708,10 @@ const resolveUniqueChartPaths = (
   chartPaths: string[],
   configBasePath: string
 ) => {
-  const paths = _.map(chartPaths, (chartPath) =>
+  const paths = chartPaths.map((chartPath) =>
     path.resolve(configBasePath, chartPath)
   )
-  return _.uniq(paths)
+  return [...new Set(paths)]
 }
 
 const convertOnlineProviderConfig = (provider: OnlineChartProvider) => {
