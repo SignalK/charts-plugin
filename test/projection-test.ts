@@ -1,15 +1,15 @@
-'use strict'
-const chai = require('chai')
-const expect = chai.expect
-const {
+import chai from 'chai'
+import {
   WEB_MERCATOR_HALF_EXTENT_M,
+  WEB_MERCATOR_MAX_LAT,
   tileToBBox,
-  lonLatToMercator
-} = require('../plugin/projection')
+  lonLatToMercator,
+  lonLatToTile
+} from '../src/projection'
 
-const WEB_MERCATOR_MAX_LAT = 85.0511287798066
+const expect = chai.expect
 
-const approx = (actual, expected, tolerance = 1e-6) => {
+const approx = (actual: number, expected: number, tolerance = 1e-6) => {
   expect(
     Math.abs(actual - expected),
     `${actual} not within ${tolerance} of ${expected}`
@@ -92,5 +92,45 @@ describe('projection: lonLatToMercator', () => {
     const [x1] = lonLatToMercator(45, 10)
     const [x2] = lonLatToMercator(90, 10)
     approx(x2, x1 * 2, 1e-6)
+  })
+})
+
+describe('projection: lonLatToTile', () => {
+  it('maps the world origin to (0,0) at z=0', () => {
+    const [x, y] = lonLatToTile(0, 0, 0)
+    expect(x).to.equal(0)
+    expect(y).to.equal(0)
+  })
+
+  it('splits the equator at z=1 into x=0 (west) and x=1 (east)', () => {
+    const [west] = lonLatToTile(-90, 0, 1)
+    const [east] = lonLatToTile(90, 0, 1)
+    expect(west).to.equal(0)
+    expect(east).to.equal(1)
+  })
+
+  it('returns integer tile coords', () => {
+    const [x, y] = lonLatToTile(13.4, 52.5, 8)
+    expect(Number.isInteger(x)).to.equal(true)
+    expect(Number.isInteger(y)).to.equal(true)
+  })
+
+  it('clamps latitudes at or beyond the poles instead of returning NaN', () => {
+    // Without clamping, tan(π/2) blows up and the floor of NaN is NaN.
+    // A user dragging a selection that touches ±90 shouldn't poison the tile set.
+    const [xNorth, yNorth] = lonLatToTile(0, 90, 4)
+    expect(Number.isFinite(xNorth)).to.equal(true)
+    expect(Number.isFinite(yNorth)).to.equal(true)
+    expect(yNorth).to.be.within(0, 2 ** 4 - 1)
+
+    const [xSouth, ySouth] = lonLatToTile(0, -90, 4)
+    expect(Number.isFinite(xSouth)).to.equal(true)
+    expect(Number.isFinite(ySouth)).to.equal(true)
+    expect(ySouth).to.be.within(0, 2 ** 4 - 1)
+  })
+
+  it('clamps at WEB_MERCATOR_MAX_LAT (north tile = 0)', () => {
+    const [, y] = lonLatToTile(0, WEB_MERCATOR_MAX_LAT, 5)
+    expect(y).to.equal(0)
   })
 })

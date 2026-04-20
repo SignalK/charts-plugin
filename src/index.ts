@@ -40,9 +40,17 @@ const chartTilesPath = '/signalk/chart-tiles'
 const RELOAD_DEBOUNCE_MS =
   Number(process.env.SK_CHARTS_RELOAD_DEBOUNCE_MS) || 5000
 
+type SanitizedProvider = Record<string, unknown>
+
 module.exports = (app: ChartProviderApp): Plugin => {
   let chartProviders: { [key: string]: ChartProvider } = {}
+  // Pre-computed per-version views of chartProviders, rebuilt on every reload.
+  // The HTTP handlers serve directly from here so tile-list requests don't pay
+  // a deep clone per provider on the hot path.
+  let sanitizedV1: { [key: string]: SanitizedProvider } = {}
+  let sanitizedV2: { [key: string]: SanitizedProvider } = {}
   let pluginStarted = false
+  let providerRegistered = false
   let props: Config = {
     chartPaths: [],
     cachePath: '',
@@ -55,7 +63,6 @@ module.exports = (app: ChartProviderApp): Plugin => {
   const serverMajorVersion = app.config.version
     ? parseInt(app.config.version.split('.')[0])
     : '1'
-  ensureDirectoryExists(defaultChartsPath)
 
   let cachePath = defaultChartsPath
 
@@ -214,6 +221,9 @@ module.exports = (app: ChartProviderApp): Plugin => {
     },
     stop: () => {
       stopWatchers()
+      // Cancel any running seeding jobs so a disabled plugin doesn't keep
+      // pulling tiles from remote providers in the background.
+      ChartSeedingManager.cancelAll()
       // Close open SQLite connections so the user can move or delete chart
       // files while the plugin is stopped (Windows blocks deletion on open
       // handles). Restart re-opens fresh via findCharts.
@@ -221,11 +231,13 @@ module.exports = (app: ChartProviderApp): Plugin => {
         if (p?._mbtilesHandle) closeMbtilesHandle(p._mbtilesHandle)
       }
       chartProviders = {}
+      sanitizedV1 = {}
+      sanitizedV2 = {}
       app.setPluginStatus('stopped')
     }
   }
 
-  const doStartup = (config: Config) => {
+  const doStartup = async (config: Config) => {
     // Check Node version
     const nodeVersion = process.versions.node
     const majorVersion = parseInt(nodeVersion.split('.')[0])
@@ -248,31 +260,41 @@ module.exports = (app: ChartProviderApp): Plugin => {
       ? [defaultChartsPath]
       : resolveUniqueChartPaths(props.chartPaths, configBasePath)
     cachePath = props.cachePath || defaultChartsPath
-    ensureDirectoryExists(cachePath)
+    // Both paths commonly coincide on a fresh install; ensure they exist once
+    // here rather than at plugin construction time, which kept us off the
+    // sync-fs path at module load.
+    await ensureDirectoryExists(defaultChartsPath)
+    if (cachePath !== defaultChartsPath) {
+      await ensureDirectoryExists(cachePath)
+    }
 
-    activeOnlineProviders = _.reduce(
-      props.onlineChartProviders,
-      (result: { [key: string]: object }, data) => {
-        const provider = convertOnlineProviderConfig(data)
-        result[provider.identifier] = provider
-        return result
-      },
-      {}
-    )
+    activeOnlineProviders = {}
+    for (const data of props.onlineChartProviders ?? []) {
+      const provider = convertOnlineProviderConfig(data)
+      if (activeOnlineProviders[provider.identifier]) {
+        app.debug(
+          `Duplicate online provider identifier "${provider.identifier}" ` +
+            `(from name "${data.name}"); the later entry wins. ` +
+            `Rename one of the providers to avoid the collision.`
+        )
+      }
+      activeOnlineProviders[provider.identifier] = provider
+    }
     app.debug(
       `Start charts plugin. Chart paths: ${activeChartPaths.join(
         ', '
       )}, online charts: ${Object.keys(activeOnlineProviders).length}`
     )
 
-    // Do not register routes if plugin has been started once already
-    pluginStarted === false && registerRoutes()
+    // Routes and the v2 provider registration are idempotent — Signal K can
+    // call start() again after a config change, but re-registering would
+    // either throw or duplicate the handler.
+    if (!pluginStarted) registerRoutes()
     pluginStarted = true
-
-    // v2 routes - register as Resource Provider, this needs to be always on startup
-    if (serverMajorVersion === 2) {
+    if (serverMajorVersion === 2 && !providerRegistered) {
       app.debug('** Registering v2 API paths **')
       registerAsProvider()
+      providerRegistered = true
     }
 
     app.setPluginStatus('Started')
@@ -282,21 +304,13 @@ module.exports = (app: ChartProviderApp): Plugin => {
   }
 
   const loadChartProviders = async (): Promise<void> => {
-    let newCharts: { [key: string]: ChartProvider } = {}
+    // Scan configured chart paths in parallel. findCharts already bounds its
+    // own per-file concurrency internally, so kicking off multiple roots at
+    // once just overlaps their directory reads.
+    let results: ({ [key: string]: ChartProvider } | undefined)[]
     try {
-      const list: ({ [key: string]: ChartProvider } | undefined)[] = []
-      for (const chartPath of activeChartPaths) {
-        list.push(await findCharts(chartPath))
-      }
-      newCharts = _.reduce(
-        list,
-        (result, c) => _.merge({}, result, c),
-        {} as { [key: string]: ChartProvider }
-      )
-      app.debug(
-        `Chart plugin: Found ${
-          _.keys(newCharts).length
-        } charts from ${activeChartPaths.join(', ')}.`
+      results = await Promise.all(
+        activeChartPaths.map((chartPath) => findCharts(chartPath))
       )
     } catch (e) {
       // Keep the last-good chartProviders instead of wiping everything - a
@@ -307,45 +321,74 @@ module.exports = (app: ChartProviderApp): Plugin => {
       return
     }
 
-    reconcileMbtilesHandles(chartProviders, newCharts)
-    chartProviders = _.merge({}, newCharts, activeOnlineProviders)
+    // Identifier is the source of uniqueness: a deep-merge here would cost
+    // O(N²) property copies for identical keys while adding nothing over a
+    // plain shallow assignment.
+    const newCharts: { [key: string]: ChartProvider } = {}
+    for (const r of results) {
+      if (!r) continue
+      for (const [id, chart] of Object.entries(r)) {
+        if (newCharts[id]) {
+          app.debug(
+            `Duplicate chart identifier "${id}" from multiple chart paths; ` +
+              `the later one wins.`
+          )
+        }
+        newCharts[id] = chart
+      }
+    }
+    app.debug(
+      `Chart plugin: Found ${
+        Object.keys(newCharts).length
+      } charts from ${activeChartPaths.join(', ')}.`
+    )
+
+    reconcileMbtilesHandles(chartProviders)
+    // Shallow assign is enough: newCharts and activeOnlineProviders both
+    // have unique ids per entry; the values themselves are used by reference.
+    chartProviders = { ...newCharts }
+    for (const [id, provider] of Object.entries(activeOnlineProviders)) {
+      if (chartProviders[id]) {
+        app.debug(
+          `Online provider identifier "${id}" collides with a local chart; ` +
+            `the online provider wins.`
+        )
+      }
+      chartProviders[id] = provider as ChartProvider
+    }
+    buildSanitizedCache()
     app.setPluginStatus(
-      `Started - ${_.keys(chartProviders).length} chart(s) loaded`
+      `Started - ${Object.keys(chartProviders).length} chart(s) loaded`
     )
   }
 
-  // When a file is still present across a reload, reuse the existing SQLite
-  // handle instead of the freshly-opened one from findCharts. Closes handles
-  // for files that have gone away. Without this, every reload leaks a SQLite
-  // connection per MBTiles file.
-  const reconcileMbtilesHandles = (
-    oldSet: { [key: string]: ChartProvider },
-    newSet: { [key: string]: ChartProvider }
-  ) => {
-    const newPaths = new Set<string>()
-    for (const p of Object.values(newSet)) {
-      if (p?._filePath) newPaths.add(p._filePath)
+  // Rebuilds the per-version sanitized views. Called once per reload so the
+  // HTTP handlers can hand out pre-built dictionaries instead of deep-cloning
+  // every provider on every metadata request.
+  const buildSanitizedCache = () => {
+    sanitizedV1 = {}
+    sanitizedV2 = {}
+    for (const [id, provider] of Object.entries(chartProviders)) {
+      sanitizedV1[id] = sanitizeProvider(provider, 1)
+      sanitizedV2[id] = sanitizeProvider(provider, 2)
     }
-    for (const [id, n] of Object.entries(newSet)) {
-      const old = oldSet[id]
-      if (
-        n?._mbtilesHandle &&
-        old?._mbtilesHandle &&
-        old._filePath === n._filePath
-      ) {
-        // Drop the newly-opened handle; reuse the existing one so in-flight
-        // requests that captured a reference keep working.
-        closeMbtilesHandle(n._mbtilesHandle)
-        n._mbtilesHandle = old._mbtilesHandle
-      }
-    }
+  }
+
+  // Close every old MBTiles handle after a reload. findCharts opened fresh
+  // handles for every file that still exists, so the NEW set reflects current
+  // content — including files that were replaced in place (same filename,
+  // new content). Reusing the old handle in that case would serve stale tiles
+  // from SQLite's cached pages. Close is delayed so an in-flight tile request
+  // that captured a reference has time to complete before the handle goes
+  // away; 1s is well above realistic tile-serve latency.
+  const MBTILES_CLOSE_DELAY_MS = 1000
+  const reconcileMbtilesHandles = (oldSet: {
+    [key: string]: ChartProvider
+  }) => {
     for (const old of Object.values(oldSet)) {
-      if (
-        old?._mbtilesHandle &&
-        old._filePath &&
-        !newPaths.has(old._filePath)
-      ) {
-        closeMbtilesHandle(old._mbtilesHandle)
+      if (old?._mbtilesHandle) {
+        const handle = old._mbtilesHandle
+        setTimeout(() => closeMbtilesHandle(handle), MBTILES_CLOSE_DELAY_MS)
       }
     }
   }
@@ -476,28 +519,38 @@ module.exports = (app: ChartProviderApp): Plugin => {
         }
         const provider = chartProviders[identifier]
         if (!provider) {
-          return res.sendStatus(500).send('Provider not found')
+          return res.status(404).send('Provider not found')
         }
         if (!maxZoom) {
           return res.status(400).send('maxZoom parameter is required')
         }
+        if (!regionGUID && !bbox && !tile) {
+          return res
+            .status(400)
+            .send('Request must include regionGUID, bbox, or tile')
+        }
         const maxZoomParsed = parseInt(maxZoom)
-        await ChartSeedingManager.createJob(
-          app.resourcesApi,
-          cachePath,
-          provider,
-          maxZoomParsed,
-          regionGUID,
-          bbox
-            ? [bbox.minLon, bbox.minLat, bbox.maxLon, bbox.maxLat]
-            : undefined,
-          tile
-        )
-        return res.status(200).json({
-          state: 'COMPLETED',
-          statusCode: 200,
-          message: 'OK'
-        })
+        try {
+          const job = await ChartSeedingManager.createJob(
+            app.resourcesApi,
+            cachePath,
+            provider,
+            maxZoomParsed,
+            regionGUID,
+            bbox
+              ? [bbox.minLon, bbox.minLat, bbox.maxLon, bbox.maxLat]
+              : undefined,
+            tile
+          )
+          // Job is registered and its tile set is known, but nothing has been
+          // downloaded yet — the caller starts it with
+          // POST /cache/jobs/:id { action: 'start' }.
+          return res.status(202).json(job.info())
+        } catch (err) {
+          return res
+            .status(500)
+            .send(`Failed to create seeding job: ${(err as Error).message}`)
+        }
       }
     )
 
@@ -514,21 +567,28 @@ module.exports = (app: ChartProviderApp): Plugin => {
         const { id } = req.params
         const { action } = req.body as { action: string }
         const parsedId = parseInt(id)
-        const job = ChartSeedingManager.ActiveJobs[parsedId]
-        if (job && action) {
-          if (action === 'start') {
-            job.seedCache()
-          } else if (action === 'stop') {
-            job.cancelJob()
-          } else if (action === 'delete') {
-            job.deleteCache()
-          } else if (action === 'remove') {
-            delete ChartSeedingManager.ActiveJobs[parsedId]
-          } else {
-            return res.status(404).send(`Job ${parsedId} not found`)
-          }
-          return res.status(200).send(`Job ${parsedId} ${action}ed`)
+        if (!Number.isFinite(parsedId)) {
+          return res.status(400).send(`Invalid job id: ${id}`)
         }
+        const job = ChartSeedingManager.ActiveJobs[parsedId]
+        if (!job) {
+          return res.status(404).send(`Job ${parsedId} not found`)
+        }
+        if (!action) {
+          return res.status(400).send('action parameter is required')
+        }
+        if (action === 'start') {
+          job.seedCache()
+        } else if (action === 'stop') {
+          job.cancelJob()
+        } else if (action === 'delete') {
+          job.deleteCache()
+        } else if (action === 'remove') {
+          delete ChartSeedingManager.ActiveJobs[parsedId]
+        } else {
+          return res.status(400).send(`Unknown action: ${action}`)
+        }
+        return res.status(200).send(`Job ${parsedId} ${action}ed`)
       }
     )
 
@@ -538,9 +598,9 @@ module.exports = (app: ChartProviderApp): Plugin => {
       apiRoutePrefix[1] + '/charts/:identifier',
       (req: Request, res: Response) => {
         const { identifier } = req.params
-        const provider = chartProviders[identifier]
-        if (provider) {
-          return res.json(sanitizeProvider(provider))
+        const view = sanitizedV1[identifier]
+        if (view) {
+          return res.json(view)
         } else {
           return res.status(404).send('Not found')
         }
@@ -548,10 +608,7 @@ module.exports = (app: ChartProviderApp): Plugin => {
     )
 
     app.get(apiRoutePrefix[1] + '/charts', (req: Request, res: Response) => {
-      const sanitized = _.mapValues(chartProviders, (provider) =>
-        sanitizeProvider(provider)
-      )
-      res.json(sanitized)
+      res.json(sanitizedV1)
     })
   }
 
@@ -566,17 +623,13 @@ module.exports = (app: ChartProviderApp): Plugin => {
             [key: string]: number | string | object | null
           }) => {
             app.debug(`** listResources() ${params}`)
-            return Promise.resolve(
-              _.mapValues(chartProviders, (provider) =>
-                sanitizeProvider(provider, 2)
-              )
-            )
+            return Promise.resolve(sanitizedV2)
           },
           getResource: (id: string) => {
             app.debug(`** getResource() ${id}`)
-            const provider = chartProviders[id]
-            if (provider) {
-              return Promise.resolve(sanitizeProvider(provider, 2))
+            const view = sanitizedV2[id]
+            if (view) {
+              return Promise.resolve(view)
             } else {
               throw new Error('Chart not found!')
             }
@@ -591,7 +644,11 @@ module.exports = (app: ChartProviderApp): Plugin => {
         }
       })
     } catch (error) {
-      app.debug('Failed Provider Registration!')
+      app.setPluginError(
+        `Failed to register as charts resource provider: ${
+          (error as Error).message
+        }`
+      )
     }
   }
 
@@ -692,30 +749,40 @@ const convertOnlineProviderConfig = (provider: OnlineChartProvider) => {
   return data
 }
 
-const sanitizeProvider = (provider: ChartProvider, version = 1) => {
-  let v
-  if (version === 1) {
-    v = _.merge({}, provider.v1)
-    v.tilemapUrl = v.tilemapUrl.replace('~tilePath~', chartTilesPath)
-  } else if (version === 2) {
-    v = _.merge({}, provider.v2)
-    v.url = v.url ? v.url.replace('~tilePath~', chartTilesPath) : ''
+// Builds the outward-facing view of a provider for either the v1 or v2 API.
+// Copies non-private top-level fields, then overlays the version-specific
+// block (v1 has tilemapUrl/chartLayers, v2 has url/layers), rewriting the
+// tile-path placeholder. Intentionally a single shallow walk — the previous
+// implementation did three deep clones per call and ran per metadata request.
+const sanitizeProvider = (
+  provider: ChartProvider,
+  version: 1 | 2 = 1
+): SanitizedProvider => {
+  const out: SanitizedProvider = {}
+  for (const [key, value] of Object.entries(provider)) {
+    if (key.startsWith('_') || key === 'v1' || key === 'v2') continue
+    out[key] = value
   }
-  provider = _.omit(provider, [
-    '_filePath',
-    '_fileFormat',
-    '_mbtilesHandle',
-    '_flipY',
-    'v1',
-    'v2'
-  ]) as ChartProvider
-  return _.merge(provider, v)
+  const v = version === 1 ? provider.v1 : provider.v2
+  if (v) {
+    for (const [key, value] of Object.entries(v)) {
+      out[key] = value
+    }
+  }
+  if (version === 1 && typeof out.tilemapUrl === 'string') {
+    out.tilemapUrl = out.tilemapUrl.replace('~tilePath~', chartTilesPath)
+  } else if (version === 2 && typeof out.url === 'string') {
+    out.url = out.url.replace('~tilePath~', chartTilesPath)
+  } else if (version === 2) {
+    out.url = ''
+  }
+  return out
 }
 
-const ensureDirectoryExists = (path: string) => {
-  if (!fs.existsSync(path)) {
-    fs.mkdirSync(path)
-  }
+const ensureDirectoryExists = async (p: string) => {
+  // mkdir with recursive:true is idempotent and skips the existsSync probe,
+  // keeping startup off the sync-fs path.
+  await fs.promises.mkdir(p, { recursive: true })
 }
 
 const serveTileFromFilesystem = async (
@@ -759,6 +826,14 @@ const serveTileFromMbtiles = (
 ) => {
   if (!isAllowedTileFormat(provider.format)) {
     res.sendStatus(404)
+    return
+  }
+  // Guard against a provider whose MBTiles handle is missing: openMbtilesFile
+  // may have failed post-reconcile, or the handle was closed while a request
+  // was in flight. Without this check, `.getTile` throws synchronously and
+  // Express never answers the client.
+  if (!provider._mbtilesHandle) {
+    res.sendStatus(500)
     return
   }
   provider._mbtilesHandle.getTile(
