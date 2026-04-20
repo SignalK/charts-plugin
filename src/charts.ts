@@ -6,6 +6,7 @@ import { ChartProvider } from './types'
 import { promisify } from 'util'
 
 // Dynamically load MBTiles to prevent module load failure
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let MBTiles: any = null
 let mbtilesLoadError: Error | null = null
 
