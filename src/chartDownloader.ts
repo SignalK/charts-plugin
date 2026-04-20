@@ -16,7 +16,7 @@ import { polygon } from '@turf/helpers'
 import checkDiskSpace from 'check-disk-space'
 import { ResourcesApi } from '@signalk/server-api'
 import { ChartProvider } from './types'
-import { lonLatToMercator, tileToBBox } from './projection'
+import { lonLatToMercator, lonLatToTile, tileToBBox } from './projection'
 
 export interface Tile {
   x: number
@@ -37,18 +37,30 @@ export class ChartSeedingManager {
     chartsPath: string,
     provider: ChartProvider,
     maxZoom: number,
-    regionGUI: string | undefined = undefined,
+    regionGUID: string | undefined = undefined,
     bbox: BBox | undefined = undefined,
     tile: Tile | undefined = undefined
   ): Promise<ChartDownloader> {
     const downloader = new ChartDownloader(resourcesApi, chartsPath, provider)
-    if (regionGUI) downloader.initalizeJobFromRegion(regionGUI, maxZoom)
-    else if (bbox) downloader.initializeJobFromBBox(bbox, maxZoom)
-    else if (tile) {
-      downloader.initializeJobFromTile(tile, maxZoom)
-    }
+    // Init must complete before the job is usable; callers get back a job that
+    // knows its tile set and totalTiles. Without awaiting, a follow-up "start"
+    // action would race the init reads of this.tiles.
+    if (regionGUID)
+      await downloader.initializeJobFromRegion(regionGUID, maxZoom)
+    else if (bbox) await downloader.initializeJobFromBBox(bbox, maxZoom)
+    else if (tile) await downloader.initializeJobFromTile(tile, maxZoom)
+    else throw new Error('createJob requires regionGUID, bbox, or tile')
     this.ActiveJobs[downloader.ID] = downloader
     return downloader
+  }
+
+  // Cancel all running jobs and clear the registry. Used when the plugin stops
+  // so a disabled plugin doesn't keep pulling tiles in the background.
+  public static cancelAll(): void {
+    for (const job of Object.values(this.ActiveJobs)) {
+      job.cancelJob()
+    }
+    this.ActiveJobs = {}
   }
 }
 
@@ -81,7 +93,7 @@ export class ChartDownloader {
     return this.id
   }
 
-  public async initalizeJobFromRegion(
+  public async initializeJobFromRegion(
     regionGUID: string,
     maxZoom: number
   ): Promise<void> {
@@ -137,6 +149,10 @@ export class ChartDownloader {
    *
    */
   async seedCache(): Promise<void> {
+    // Guard against double-start: a second call while Running would share
+    // counters and concurrency slots with the first and corrupt progress.
+    if (this.status === Status.Running) return
+
     this.cancelRequested = false
     this.status = Status.Running
     this.tilesToDownload = await this.filterCachedTiles(this.tiles)
@@ -145,26 +161,22 @@ export class ChartDownloader {
     this.cachedTiles = this.totalTiles - this.tilesToDownload.length
     const limit = pLimit(this.concurrentDownloadsLimit) // concurrent download limit
     let tileCounter = 0
-    this.tilesToDownload = await this.filterCachedTiles(this.tiles)
 
     const tasks = this.tilesToDownload.map((tile) =>
       limit(async () => {
-        if (this.cancelRequested) {
-          this.status = Status.Stopped
-          return
-        }
+        if (this.cancelRequested) return
         if (tileCounter % 1000 === 0) {
           await new Promise((r) => setTimeout(r, 0))
           try {
             const { free } = await checkDiskSpace(this.chartsPath)
             if (free < ChartDownloader.MINIMUM_FREE_DISK_SPACE) {
               console.warn(`Low disk space. Stopping download.`)
-              this.status = Status.Stopped
+              this.cancelRequested = true
               return
             }
           } catch (err) {
             console.error(`Error checking disk space:`, err)
-            this.status = Status.Stopped
+            this.cancelRequested = true
             return
           }
         }
@@ -174,6 +186,10 @@ export class ChartDownloader {
           this.provider,
           tile
         )
+        // Re-check after the await: the job may have been cancelled while the
+        // fetch was in flight. Still-running fetches would otherwise keep
+        // mutating counters after status flips to Stopped.
+        if (this.cancelRequested) return
         if (buffer === null) {
           this.failedTiles++
         } else {
@@ -219,26 +235,32 @@ export class ChartDownloader {
   }
 
   private async filterCachedTiles(allTiles: Tile[]): Promise<Tile[]> {
-    const checks = allTiles.map(async (tile) => {
-      const tilePath = path.join(
-        this.chartsPath,
-        this.provider.name,
-        `${tile.z}`,
-        `${tile.x}`,
-        `${tile.y}.${this.provider.format}`
-      )
+    // Bound the concurrent fs.access calls. 100k+ tiles in a large bbox would
+    // otherwise fire all accesses at once, risking EMFILE on default rlimit
+    // and spiking the event loop.
+    const limit = pLimit(64)
+    const checks = allTiles.map((tile) =>
+      limit(async () => {
+        const tilePath = path.join(
+          this.chartsPath,
+          this.provider.name,
+          `${tile.z}`,
+          `${tile.x}`,
+          `${tile.y}.${this.provider.format}`
+        )
 
-      try {
-        await fs.promises.access(tilePath) // file exists
-        return null // filter out cached tile
-      } catch (err: unknown) {
-        if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-          return tile // file does not exist → uncached
+        try {
+          await fs.promises.access(tilePath) // file exists
+          return null // filter out cached tile
+        } catch (err: unknown) {
+          if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+            return tile // file does not exist → uncached
+          }
+          console.error('Unexpected fs error:', err)
+          return tile // treat unknown errors as uncached
         }
-        console.error('Unexpected fs error:', err)
-        return tile // treat unknown errors as uncached
-      }
-    })
+      })
+    )
 
     const results = await Promise.all(checks)
     return results.filter((t): t is Tile => t !== null)
@@ -379,17 +401,22 @@ export class ChartDownloader {
     const [minLon, minLat, maxLon, maxLat] = bbox
 
     const crossesAntiMeridian = minLon > maxLon
+    // Respect the provider's minzoom: low zooms outside the provider's range
+    // would 404 from the remote and just inflate totalTiles.
+    const minZoom = Math.max(1, this.provider.minzoom ?? 1)
 
-    // Helper to process a lon/lat box normally
+    // Helper to process a lon/lat box normally. lonLatToTileXY returns
+    // tile-Y increasing southward, so for a box with minLat < maxLat the
+    // south edge yields the larger tile-Y.
     const processBBox = (
       lo1: number,
       la1: number,
       lo2: number,
       la2: number
     ) => {
-      for (let z = 0; z <= maxZoom; z++) {
-        const [minX, maxY] = this.lonLatToTileXY(lo1, la1, z)
-        const [maxX, minY] = this.lonLatToTileXY(lo2, la2, z)
+      for (let z = minZoom; z <= maxZoom; z++) {
+        const [minX, maxY] = lonLatToTile(lo1, la1, z) // SW corner
+        const [maxX, minY] = lonLatToTile(lo2, la2, z) // NE corner
 
         for (let x = minX; x <= maxX; x++) {
           for (let y = minY; y <= maxY; y++) {
@@ -430,22 +457,30 @@ export class ChartDownloader {
 
       const boundingBox = bbox(feature.geometry as Polygon) // [minX, minY, maxX, maxY]
       for (let z = zoomMin; z <= zoomMax; z++) {
-        const [minX, minY] = this.lonLatToTileXY(
-          boundingBox[0],
-          boundingBox[3],
-          z
-        ) // top-left
-        const [maxX, maxY] = this.lonLatToTileXY(
-          boundingBox[2],
-          boundingBox[1],
-          z
-        ) // bottom-right
+        const [minX, minY] = lonLatToTile(boundingBox[0], boundingBox[3], z) // top-left
+        const [maxX, maxY] = lonLatToTile(boundingBox[2], boundingBox[1], z) // bottom-right
 
         for (let x = minX; x <= maxX; x++) {
           for (let y = minY; y <= maxY; y++) {
-            const tileBbox = tileToBBox(x, y, z)
-            const tilePoly = this.bboxPolygon(tileBbox)
-
+            // Cheap AABB pre-filter avoids allocating a turf polygon and
+            // running booleanIntersects for tiles that can't possibly
+            // overlap the feature's bbox. Saves 90%+ of the turf work on
+            // concave regions.
+            const [tMinLon, tMinLat, tMaxLon, tMaxLat] = tileToBBox(x, y, z)
+            if (
+              tMaxLon < boundingBox[0] ||
+              tMinLon > boundingBox[2] ||
+              tMaxLat < boundingBox[1] ||
+              tMinLat > boundingBox[3]
+            ) {
+              continue
+            }
+            const tilePoly = this.bboxPolygon([
+              tMinLon,
+              tMinLat,
+              tMaxLon,
+              tMaxLat
+            ])
             if (booleanIntersects(feature as Feature, tilePoly)) {
               tiles.push({ x, y, z })
             }
@@ -521,25 +556,6 @@ export class ChartDownloader {
       type: 'FeatureCollection' as const,
       features
     }
-  }
-
-  private lonLatToTileXY(
-    lon: number,
-    lat: number,
-    zoom: number
-  ): [number, number] {
-    const n = 2 ** zoom
-    const x = Math.floor(((lon + 180) / 360) * n)
-    const y = Math.floor(
-      ((1 -
-        Math.log(
-          Math.tan((lat * Math.PI) / 180) + 1 / Math.cos((lat * Math.PI) / 180)
-        ) /
-          Math.PI) /
-        2) *
-        n
-    )
-    return [x, y]
   }
 
   private bboxPolygon(boundingBox: BBox) {

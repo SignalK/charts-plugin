@@ -2,6 +2,7 @@ import path from 'path'
 import * as xml2js from 'xml2js'
 import { Dirent, promises as fs } from 'fs'
 import * as _ from 'lodash'
+import pLimit from 'p-limit'
 import { ChartProvider } from './types'
 import { promisify } from 'util'
 
@@ -30,29 +31,31 @@ async function loadMBTiles() {
 // else is descended into so layouts like charts/<region>/<chart> work without
 // having to list every subdir in the plugin config. Symlinks are skipped and
 // the depth is bounded so a misplaced config entry can't send the scan into
-// node_modules or a symlink loop.
+// node_modules or a symlink loop. File parsing (openMbtilesFile /
+// directoryToMapInfo) runs concurrently under a global limiter — 500 MBTiles
+// opened serially on a Pi SD card was a 5-30s startup stall.
 const MAX_SCAN_DEPTH = 8
+const PARSE_CONCURRENCY = 12
 
 export async function findCharts(
   chartBaseDir: string
 ): Promise<{ [identifier: string]: ChartProvider }> {
   await loadMBTiles()
   const charts: ChartProvider[] = []
-  await scanDir(chartBaseDir, charts, 0)
-  return _.reduce(
-    charts,
-    (result, chart) => {
-      result[chart.identifier] = chart
-      return result
-    },
-    {} as { [identifier: string]: ChartProvider }
-  )
+  const limit = pLimit(PARSE_CONCURRENCY)
+  await scanDir(chartBaseDir, charts, 0, limit)
+  const result: { [identifier: string]: ChartProvider } = {}
+  for (const chart of charts) {
+    result[chart.identifier] = chart
+  }
+  return result
 }
 
 async function scanDir(
   dir: string,
   out: ChartProvider[],
-  depth: number
+  depth: number,
+  limit: ReturnType<typeof pLimit>
 ): Promise<void> {
   if (depth > MAX_SCAN_DEPTH) return
   let entries: Dirent[]
@@ -64,6 +67,11 @@ async function scanDir(
     )
     return
   }
+  // Directory recursion runs outside the limiter to avoid deadlock: a parent
+  // holding a slot while waiting for children to take their own slots would
+  // starve when the limit is reached. Only the leaf file-parsing work
+  // (openMbtilesFile / directoryToMapInfo) is rate-limited.
+  const tasks: Promise<void>[] = []
   for (const entry of entries) {
     if (entry.isSymbolicLink()) continue
     const entryPath = path.resolve(dir, entry.name)
@@ -74,17 +82,30 @@ async function scanDir(
         )
         continue
       }
-      const chart = await openMbtilesFile(entryPath, entry.name)
-      if (chart) out.push(chart as ChartProvider)
+      tasks.push(
+        (async () => {
+          const chart = await limit(() =>
+            openMbtilesFile(entryPath, entry.name)
+          )
+          if (chart) out.push(chart as ChartProvider)
+        })()
+      )
     } else if (entry.isDirectory()) {
-      const chart = await directoryToMapInfo(entryPath, entry.name)
-      if (chart) {
-        out.push(chart as ChartProvider)
-      } else {
-        await scanDir(entryPath, out, depth + 1)
-      }
+      tasks.push(
+        (async () => {
+          const chart = await limit(() =>
+            directoryToMapInfo(entryPath, entry.name)
+          )
+          if (chart) {
+            out.push(chart as ChartProvider)
+          } else {
+            await scanDir(entryPath, out, depth + 1, limit)
+          }
+        })()
+      )
     }
   }
+  await Promise.all(tasks)
 }
 
 function openMbtilesFile(file: string, filename: string) {
@@ -192,7 +213,7 @@ function directoryToMapInfo(file: string, identifier: string) {
     })
     .catch((e) => {
       console.error(`Error getting charts from ${file}`, e.message)
-      return undefined
+      return null
     })
 }
 
