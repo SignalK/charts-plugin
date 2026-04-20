@@ -10,3 +10,6 @@ coverage
 # Stryker mutation testing
 reports
 .stryker-tmp
+
+# Temp dirs used by watcher tests
+test/.tmp
