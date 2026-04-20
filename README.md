@@ -52,7 +52,9 @@ You can either:
 
 <img src="https://user-images.githubusercontent.com/1435910/39382493-57c1e4dc-4a6e-11e8-93e1-cedb4c7662f4.png" alt="Chart paths configuration" width="450"/>
 
->**Note:** After chart files have been added to folders they will be processed after the plugin has been restarted! _(disable / enable the plugin)_ 
+The plugin watches each configured chart path and picks up new, renamed, or deleted chart files automatically, including files in nested subdirectories (e.g. `charts/<region>/<chart>.mbtiles`). Changes are applied after a short debounce (5 seconds by default) so bursts of events from file copies and atomic saves are collapsed into a single reload.
+
+>**Note:** File-system watching relies on native OS events. On some network mounts (SMB/NFS) events may be missed; if a chart doesn't appear after the debounce window, disable and re-enable the plugin.
 
 
 ### Online chart providers

@@ -1,5 +1,5 @@
 import path from 'path'
-import fs from 'fs'
+import fs, { FSWatcher } from 'fs'
 import * as _ from 'lodash'
 import { findCharts } from './charts'
 import { apiRoutePrefix } from './constants'
@@ -34,6 +34,11 @@ interface ChartProviderApp
 const MIN_ZOOM = 1
 const MAX_ZOOM = 24
 const chartTilesPath = '/signalk/chart-tiles'
+// Debounce window used to collapse FSWatcher bursts during rename / atomic-save
+// sequences into one reload. Overridable via env var so tests don't have to
+// wait the full 5s on every watcher assertion.
+const RELOAD_DEBOUNCE_MS =
+  Number(process.env.SK_CHARTS_RELOAD_DEBOUNCE_MS) || 5000
 
 module.exports = (app: ChartProviderApp): Plugin => {
   let chartProviders: { [key: string]: ChartProvider } = {}
@@ -53,6 +58,14 @@ module.exports = (app: ChartProviderApp): Plugin => {
   ensureDirectoryExists(defaultChartsPath)
 
   let cachePath = defaultChartsPath
+
+  // Chart-folder watcher state, plugin-scoped so stop()/start() cycles reset cleanly.
+  // activeChartPaths / activeOnlineProviders hold the last-known config so a
+  // watcher-triggered reload can reuse it without re-running doStartup.
+  const watchers: FSWatcher[] = []
+  let reloadTimer: NodeJS.Timeout | undefined
+  let activeChartPaths: string[] = []
+  let activeOnlineProviders: { [key: string]: object } = {}
 
   // Check Node version for schema
   const nodeVersion = process.versions.node
@@ -200,6 +213,14 @@ module.exports = (app: ChartProviderApp): Plugin => {
       return doStartup(settings) // return required for tests
     },
     stop: () => {
+      stopWatchers()
+      // Close open SQLite connections so the user can move or delete chart
+      // files while the plugin is stopped (Windows blocks deletion on open
+      // handles). Restart re-opens fresh via findCharts.
+      for (const p of Object.values(chartProviders)) {
+        if (p?._mbtilesHandle) closeMbtilesHandle(p._mbtilesHandle)
+      }
+      chartProviders = {}
       app.setPluginStatus('stopped')
     }
   }
@@ -223,13 +244,13 @@ module.exports = (app: ChartProviderApp): Plugin => {
     }`
     app.debug(`**urlBase** ${urlBase}`)
 
-    const chartPaths = _.isEmpty(props.chartPaths)
+    activeChartPaths = _.isEmpty(props.chartPaths)
       ? [defaultChartsPath]
       : resolveUniqueChartPaths(props.chartPaths, configBasePath)
     cachePath = props.cachePath || defaultChartsPath
     ensureDirectoryExists(cachePath)
 
-    const onlineProviders = _.reduce(
+    activeOnlineProviders = _.reduce(
       props.onlineChartProviders,
       (result: { [key: string]: object }, data) => {
         const provider = convertOnlineProviderConfig(data)
@@ -239,9 +260,9 @@ module.exports = (app: ChartProviderApp): Plugin => {
       {}
     )
     app.debug(
-      `Start charts plugin. Chart paths: ${chartPaths.join(
+      `Start charts plugin. Chart paths: ${activeChartPaths.join(
         ', '
-      )}, online charts: ${Object.keys(onlineProviders).length}`
+      )}, online charts: ${Object.keys(activeOnlineProviders).length}`
     )
 
     // Do not register routes if plugin has been started once already
@@ -256,30 +277,154 @@ module.exports = (app: ChartProviderApp): Plugin => {
 
     app.setPluginStatus('Started')
 
-    const loadProviders = (async () => {
-      const list = []
-      for (const chartPath of chartPaths) {
+    startWatchers()
+    return loadChartProviders()
+  }
+
+  const loadChartProviders = async (): Promise<void> => {
+    let newCharts: { [key: string]: ChartProvider } = {}
+    try {
+      const list: ({ [key: string]: ChartProvider } | undefined)[] = []
+      for (const chartPath of activeChartPaths) {
         list.push(await findCharts(chartPath))
       }
-      return list
-    })().then((list: ChartProvider[]) =>
-      _.reduce(list, (result, charts) => _.merge({}, result, charts), {})
-    )
+      newCharts = _.reduce(
+        list,
+        (result, c) => _.merge({}, result, c),
+        {} as { [key: string]: ChartProvider }
+      )
+      app.debug(
+        `Chart plugin: Found ${
+          _.keys(newCharts).length
+        } charts from ${activeChartPaths.join(', ')}.`
+      )
+    } catch (e) {
+      // Keep the last-good chartProviders instead of wiping everything - a
+      // transient read error (file locked during copy, EBUSY, etc.) shouldn't
+      // blank the service out until the next filesystem event.
+      console.error(`Error loading chart providers`, (e as Error).message)
+      app.setPluginError(`Error loading chart providers`)
+      return
+    }
 
-    return loadProviders
-      .then((charts: { [key: string]: ChartProvider }) => {
-        app.debug(
-          `Chart plugin: Found ${
-            _.keys(charts).length
-          } charts from ${chartPaths.join(', ')}.`
+    reconcileMbtilesHandles(chartProviders, newCharts)
+    chartProviders = _.merge({}, newCharts, activeOnlineProviders)
+    app.setPluginStatus(
+      `Started - ${_.keys(chartProviders).length} chart(s) loaded`
+    )
+  }
+
+  // When a file is still present across a reload, reuse the existing SQLite
+  // handle instead of the freshly-opened one from findCharts. Closes handles
+  // for files that have gone away. Without this, every reload leaks a SQLite
+  // connection per MBTiles file.
+  const reconcileMbtilesHandles = (
+    oldSet: { [key: string]: ChartProvider },
+    newSet: { [key: string]: ChartProvider }
+  ) => {
+    const newPaths = new Set<string>()
+    for (const p of Object.values(newSet)) {
+      if (p?._filePath) newPaths.add(p._filePath)
+    }
+    for (const [id, n] of Object.entries(newSet)) {
+      const old = oldSet[id]
+      if (
+        n?._mbtilesHandle &&
+        old?._mbtilesHandle &&
+        old._filePath === n._filePath
+      ) {
+        // Drop the newly-opened handle; reuse the existing one so in-flight
+        // requests that captured a reference keep working.
+        closeMbtilesHandle(n._mbtilesHandle)
+        n._mbtilesHandle = old._mbtilesHandle
+      }
+    }
+    for (const old of Object.values(oldSet)) {
+      if (
+        old?._mbtilesHandle &&
+        old._filePath &&
+        !newPaths.has(old._filePath)
+      ) {
+        closeMbtilesHandle(old._mbtilesHandle)
+      }
+    }
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const closeMbtilesHandle = (handle: any) => {
+    if (typeof handle?.close !== 'function') return
+    try {
+      handle.close((err: Error | null) => {
+        if (err) app.debug(`MBTiles close error: ${err.message}`)
+      })
+    } catch (err) {
+      app.debug(`MBTiles close threw: ${(err as Error).message}`)
+    }
+  }
+
+  // Chart folders are watched so new/renamed/deleted files become visible
+  // without a plugin restart. FSWatcher bursts events during rename and
+  // atomic-save sequences; the debounce collapses a burst into one reload.
+  const scheduleReload = () => {
+    if (reloadTimer) clearTimeout(reloadTimer)
+    reloadTimer = setTimeout(() => {
+      reloadTimer = undefined
+      app.debug('Reloading charts after filesystem change')
+      loadChartProviders()
+    }, RELOAD_DEBOUNCE_MS)
+  }
+
+  const startWatchers = () => {
+    stopWatchers()
+    for (const p of activeChartPaths) {
+      watchers.push(...createWatchers(p))
+    }
+  }
+
+  // recursive:true is the common path on macOS / Windows / Linux (Node 22+).
+  // If the platform or filesystem doesn't support it (some network mounts,
+  // older Linux), fall back to a non-recursive watch so at least top-level
+  // changes are picked up.
+  const createWatchers = (p: string): FSWatcher[] => {
+    const handlers: FSWatcher[] = []
+    try {
+      const watcher = fs.watch(p, { encoding: 'utf8', recursive: true }, () =>
+        scheduleReload()
+      )
+      watcher.on('error', (err) =>
+        app.debug(`Watcher error on ${p}: ${err.message}`)
+      )
+      handlers.push(watcher)
+      app.debug(`Watching chart folder recursively: ${p}`)
+    } catch (err) {
+      app.debug(
+        `Recursive watch unavailable for ${p} (${
+          (err as Error).message
+        }); falling back to top-level watch`
+      )
+      try {
+        const watcher = fs.watch(p, { encoding: 'utf8' }, () =>
+          scheduleReload()
         )
-        chartProviders = _.merge({}, charts, onlineProviders)
-      })
-      .catch((e: Error) => {
-        console.error(`Error loading chart providers`, e.message)
-        chartProviders = {}
-        app.setPluginError(`Error loading chart providers`)
-      })
+        watcher.on('error', (e) =>
+          app.debug(`Watcher error on ${p}: ${e.message}`)
+        )
+        handlers.push(watcher)
+      } catch (e) {
+        app.debug(`Unable to watch ${p}: ${(e as Error).message}`)
+      }
+    }
+    return handlers
+  }
+
+  const stopWatchers = () => {
+    if (reloadTimer) {
+      clearTimeout(reloadTimer)
+      reloadTimer = undefined
+    }
+    while (watchers.length) {
+      watchers.pop()?.close()
+    }
   }
 
   const registerRoutes = () => {

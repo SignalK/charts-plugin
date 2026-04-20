@@ -1,6 +1,6 @@
 import path from 'path'
 import * as xml2js from 'xml2js'
-import { promises as fs } from 'fs'
+import { Dirent, promises as fs } from 'fs'
 import * as _ from 'lodash'
 import { ChartProvider } from './types'
 import { promisify } from 'util'
@@ -25,52 +25,66 @@ async function loadMBTiles() {
   }
 }
 
-export function findCharts(chartBaseDir: string) {
-  return loadMBTiles()
-    .then(() => fs.readdir(chartBaseDir, { withFileTypes: true }))
-    .then(async (files) => {
-      const results = []
-      for (const file of files) {
-        const isMbtilesFile = file.name.match(/\.mbtiles$/i)
-        const filePath = path.resolve(chartBaseDir, file.name)
-        const isDirectory = file.isDirectory()
-        if (isMbtilesFile) {
-          if (mbtilesLoadError) {
-            console.warn(
-              `Skipping mbtiles file ${file.name}: MBTiles module not available`
-            )
-            results.push(null)
-          } else {
-            results.push(await openMbtilesFile(filePath, file.name))
-          }
-        } else if (isDirectory) {
-          results.push(await directoryToMapInfo(filePath, file.name))
-        } else {
-          results.push(null)
-        }
+// Recursively scans chartBaseDir and any non-chart subdirectories. A directory
+// is treated as a chart if it has tilemapresource.xml or metadata.json; anything
+// else is descended into so layouts like charts/<region>/<chart> work without
+// having to list every subdir in the plugin config. Symlinks are skipped and
+// the depth is bounded so a misplaced config entry can't send the scan into
+// node_modules or a symlink loop.
+const MAX_SCAN_DEPTH = 8
+
+export async function findCharts(
+  chartBaseDir: string
+): Promise<{ [identifier: string]: ChartProvider }> {
+  await loadMBTiles()
+  const charts: ChartProvider[] = []
+  await scanDir(chartBaseDir, charts, 0)
+  return _.reduce(
+    charts,
+    (result, chart) => {
+      result[chart.identifier] = chart
+      return result
+    },
+    {} as { [identifier: string]: ChartProvider }
+  )
+}
+
+async function scanDir(
+  dir: string,
+  out: ChartProvider[],
+  depth: number
+): Promise<void> {
+  if (depth > MAX_SCAN_DEPTH) return
+  let entries: Dirent[]
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true })
+  } catch (err) {
+    console.error(
+      `Error reading charts directory ${dir}:${(err as Error).message}`
+    )
+    return
+  }
+  for (const entry of entries) {
+    if (entry.isSymbolicLink()) continue
+    const entryPath = path.resolve(dir, entry.name)
+    if (entry.name.match(/\.mbtiles$/i)) {
+      if (mbtilesLoadError) {
+        console.warn(
+          `Skipping mbtiles file ${entry.name}: MBTiles module not available`
+        )
+        continue
       }
-      return results
-    })
-    .then(
-      (result: (ChartProvider | null | undefined)[]) =>
-        _.filter(result, _.identity) as ChartProvider[]
-    )
-    .then((charts: ChartProvider[]) =>
-      _.reduce(
-        charts,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (result: any, chart: ChartProvider) => {
-          result[chart.identifier] = chart
-          return result
-        },
-        {}
-      )
-    )
-    .catch((err: Error) => {
-      console.error(
-        `Error reading charts directory ${chartBaseDir}:${err.message}`
-      )
-    })
+      const chart = await openMbtilesFile(entryPath, entry.name)
+      if (chart) out.push(chart as ChartProvider)
+    } else if (entry.isDirectory()) {
+      const chart = await directoryToMapInfo(entryPath, entry.name)
+      if (chart) {
+        out.push(chart as ChartProvider)
+      } else {
+        await scanDir(entryPath, out, depth + 1)
+      }
+    }
+  }
 }
 
 function openMbtilesFile(file: string, filename: string) {
