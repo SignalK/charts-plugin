@@ -20,9 +20,7 @@ interface Config {
 }
 
 interface ChartProviderApp
-  extends ServerAPI,
-    ResourceProviderRegistry,
-    Application {
+  extends ServerAPI, ResourceProviderRegistry, Application {
   config: {
     ssl: boolean
     configPath: string
