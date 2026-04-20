@@ -71,6 +71,28 @@ For WMS & WMTS sources you can specify the layers you wish to display.
 
 A proxy for online charts can be created using the "Proxy through SignalK server" option. If enabled tiles will be fetched from the remote server and cached by the SignalK server making it possible to store the tiles for offline usage. Additional http headers can be passed to the remote server by adding colon separated headers, e.g. User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64). User-Agent is the header name and Mozilla... will be the value.
 
+#### URL placeholders
+
+The following placeholders are substituted in the chart URL when the proxy fetches each tile:
+
+| Placeholder | Replaced with |
+|---|---|
+| `{z}` | Tile zoom level |
+| `{x}` | Tile column |
+| `{y}` | Tile row (XYZ / Google / OSM scheme, origin at top-left) |
+| `{-y}` | Tile row flipped to TMS scheme (origin at bottom-left) |
+| `{z-2}` | Zoom minus 2, for NOAA WMTS sources served as a tilemap |
+| `{bbox}` | Tile bounds in EPSG:4326, as `minLon,minLat,maxLon,maxLat` (WMS 1.1.1 axis order) |
+| `{bbox_3857}` | Tile bounds in EPSG:3857 / Web Mercator meters, as `minX,minY,maxX,maxY` |
+
+`{bbox}` and `{bbox_3857}` make it possible to proxy and cache WMS sources that do not offer an XYZ endpoint. Prefer `{bbox_3857}` with WMS 1.3.0 endpoints, because WMS 1.3.0 requires `lat,lon` axis order for geographic CRSes such as EPSG:4326 and `{bbox}` always emits `lon,lat`.
+
+Example: NOAA Chart Display Service (S-57 ENC) as a cacheable tile source — set server type `tilelayer`, format `png`, proxy enabled, and use:
+
+```
+https://gis.charttools.noaa.gov/arcgis/rest/services/MCS/NOAAChartDisplay/MapServer/exts/MaritimeChartService/WMSServer?service=WMS&version=1.3.0&request=GetMap&layers=0,1,2,3,4,5,6,7,8,9,10,11,12&styles=&crs=EPSG:3857&bbox={bbox_3857}&width=256&height=256&format=image/png&transparent=true
+```
+
 ### Supported chart formats
 
 - [MBTiles](https://github.com/mapbox/mbtiles-spec) files
