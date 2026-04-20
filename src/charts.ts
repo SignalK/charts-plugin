@@ -1,11 +1,12 @@
 import path from 'path'
 import * as xml2js from 'xml2js'
-import { Dirent, promises as fs } from 'fs'
+import { promises as fs } from 'fs'
 import * as _ from 'lodash'
 import { ChartProvider } from './types'
 import { promisify } from 'util'
 
 // Dynamically load MBTiles to prevent module load failure
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let MBTiles: any = null
 let mbtilesLoadError: Error | null = null
 
@@ -160,12 +161,12 @@ function directoryToMapInfo(file: string, identifier: string) {
           return null
         }
         info.identifier = identifier
-        ;(info._fileFormat = 'directory'),
-          (info._filePath = file),
-          (info.v1 = {
-            tilemapUrl: `~tilePath~/${identifier}/{z}/{x}/{y}`,
-            chartLayers: []
-          })
+        info._fileFormat = 'directory'
+        info._filePath = file
+        info.v1 = {
+          tilemapUrl: `~tilePath~/${identifier}/{z}/{x}/{y}`,
+          chartLayers: []
+        }
         info.v2 = {
           url: `~tilePath~/${identifier}/{z}/{x}/{y}`,
           layers: []

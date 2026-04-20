@@ -479,6 +479,14 @@ const responseHttpOptions = {
   }
 }
 
+// Allowed tile file formats. Add new formats here when supporting them.
+const ALLOWED_TILE_FORMATS = new Set(['png', 'jpg', 'jpeg', 'pbf'])
+
+const isAllowedTileFormat = (format: string | undefined): boolean => {
+  if (!format) return false
+  return ALLOWED_TILE_FORMATS.has(format.toLowerCase())
+}
+
 const resolveUniqueChartPaths = (
   chartPaths: string[],
   configBasePath: string
@@ -565,7 +573,7 @@ const ensureDirectoryExists = (path: string) => {
   }
 }
 
-const serveTileFromFilesystem = (
+const serveTileFromFilesystem = async (
   res: Response,
   provider: ChartProvider,
   z: number,
@@ -573,18 +581,28 @@ const serveTileFromFilesystem = (
   y: number
 ) => {
   const { format, _flipY, _filePath } = provider
+  const normalizedFormat = format?.toLowerCase() ?? ''
+  if (!_filePath || !ALLOWED_TILE_FORMATS.has(normalizedFormat)) {
+    res.sendStatus(404)
+    return
+  }
   const flippedY = Math.pow(2, z) - 1 - y
-  const file = _filePath
-    ? path.resolve(_filePath, `${z}/${x}/${_flipY ? flippedY : y}.${format}`)
-    : ''
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  res.sendFile(file, responseHttpOptions, (err: any) => {
-    if (err && err.code === 'ENOENT') {
+  const file = path.resolve(
+    _filePath,
+    `${z}/${x}/${_flipY ? flippedY : y}.${normalizedFormat}`
+  )
+  try {
+    const stats = await fs.promises.stat(file)
+    if (!stats.isFile()) {
       res.sendStatus(404)
-    } else if (err) {
-      throw err
+      return
     }
-  })
+    await fs.promises.access(file, fs.constants.R_OK)
+  } catch {
+    res.sendStatus(404)
+    return
+  }
+  res.sendFile(file, responseHttpOptions)
 }
 
 const serveTileFromMbtiles = (
@@ -594,6 +612,10 @@ const serveTileFromMbtiles = (
   x: number,
   y: number
 ) => {
+  if (!isAllowedTileFormat(provider.format)) {
+    res.sendStatus(404)
+    return
+  }
   provider._mbtilesHandle.getTile(
     z,
     x,
