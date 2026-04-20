@@ -67,7 +67,8 @@ module.exports = (app: ChartProviderApp): Plugin => {
         versionWarning: {
           type: 'string',
           title: 'REQUIRES NODE VERSION >=22',
-          description: 'Starting with version 4 this plugin will not work with Node versions older than 22. You can install an older plugin version from the App store.',
+          description:
+            'Starting with version 4 this plugin will not work with Node versions older than 22. You can install an older plugin version from the App store.',
           default: ''
         }
       }),
@@ -261,10 +262,9 @@ module.exports = (app: ChartProviderApp): Plugin => {
         list.push(await findCharts(chartPath))
       }
       return list
-    })()
-      .then((list: ChartProvider[]) =>
-        _.reduce(list, (result, charts) => _.merge({}, result, charts), {})
-      )
+    })().then((list: ChartProvider[]) =>
+      _.reduce(list, (result, charts) => _.merge({}, result, charts), {})
+    )
 
     return loadProviders
       .then((charts: { [key: string]: ChartProvider }) => {

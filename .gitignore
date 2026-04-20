@@ -3,3 +3,11 @@ node_modules/
 plugin/
 package-lock.json
 tsconfig.tsbuildinfo
+
+# Test coverage
+coverage
+.nyc_output
+
+# Stryker mutation testing
+reports
+.stryker-tmp

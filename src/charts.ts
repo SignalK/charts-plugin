@@ -16,7 +16,10 @@ async function loadMBTiles() {
       MBTiles = module.default || module
     } catch (err) {
       mbtilesLoadError = err as Error
-      console.error('Failed to load @signalk/mbtiles module:', (err as Error).message)
+      console.error(
+        'Failed to load @signalk/mbtiles module:',
+        (err as Error).message
+      )
     }
   }
 }
@@ -32,7 +35,9 @@ export function findCharts(chartBaseDir: string) {
         const isDirectory = file.isDirectory()
         if (isMbtilesFile) {
           if (mbtilesLoadError) {
-            console.warn(`Skipping mbtiles file ${file.name}: MBTiles module not available`)
+            console.warn(
+              `Skipping mbtiles file ${file.name}: MBTiles module not available`
+            )
             results.push(null)
           } else {
             results.push(await openMbtilesFile(filePath, file.name))
@@ -45,7 +50,10 @@ export function findCharts(chartBaseDir: string) {
       }
       return results
     })
-    .then((result: (ChartProvider | null | undefined)[]) => _.filter(result, _.identity) as ChartProvider[])
+    .then(
+      (result: (ChartProvider | null | undefined)[]) =>
+        _.filter(result, _.identity) as ChartProvider[]
+    )
     .then((charts: ChartProvider[]) =>
       _.reduce(
         charts,
