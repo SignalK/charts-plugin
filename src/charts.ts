@@ -152,13 +152,21 @@ function openMbtilesFile(
       reject(mbtilesLoadError ?? new Error('MBTiles module not loaded'))
       return
     }
-    new MBTiles(file, (err, mbtiles) => {
+    // mode=ro: open read-only. Without this the library defaults to rwc,
+    // which needs the containing directory writable so SQLite can create its
+    // rollback journal. That breaks read-only mounts (Docker volumes, NFS,
+    // SMB) with SQLITE_CANTOPEN even though the plugin never writes.
+    const instance = new MBTiles(`${file}?mode=ro`, (err, mbtiles) => {
       if (err) return reject(err)
       mbtiles.getInfo((infoErr, metadata) => {
         if (infoErr) return reject(infoErr)
         resolve({ mbtiles, metadata })
       })
     })
+    // MBTiles extends EventEmitter; an unhandled 'error' event crashes the
+    // node process. Reject is idempotent after the promise settles, so this
+    // also swallows any stray runtime error on this handle.
+    instance.on('error', reject)
   })
     .then(({ mbtiles, metadata }) => {
       if (
