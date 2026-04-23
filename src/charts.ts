@@ -67,13 +67,18 @@ async function loadMBTiles() {
 const MAX_SCAN_DEPTH = 8
 const PARSE_CONCURRENCY = 12
 
+// onScanError is invoked when a scan step hits something that could leave
+// the result set incomplete (readdir failure, non-ENOENT fs.stat, MBTiles
+// open crash). The caller uses it to distinguish "legitimately zero charts"
+// from "transient failure that should fall back to the last-good set".
 export async function findCharts(
-  chartBaseDir: string
+  chartBaseDir: string,
+  onScanError?: () => void
 ): Promise<{ [identifier: string]: ChartProvider }> {
   await loadMBTiles()
   const charts: ChartProvider[] = []
   const limit = pLimit(PARSE_CONCURRENCY)
-  await scanDir(chartBaseDir, charts, 0, limit)
+  await scanDir(chartBaseDir, charts, 0, limit, onScanError)
   const result: { [identifier: string]: ChartProvider } = {}
   for (const chart of charts) {
     result[chart.identifier] = chart
@@ -85,13 +90,20 @@ async function scanDir(
   dir: string,
   out: ChartProvider[],
   depth: number,
-  limit: ReturnType<typeof pLimit>
+  limit: ReturnType<typeof pLimit>,
+  onScanError?: () => void
 ): Promise<void> {
   if (depth > MAX_SCAN_DEPTH) return
   let entries: Dirent[]
   try {
     entries = await fs.readdir(dir, { withFileTypes: true })
   } catch (err) {
+    // ENOENT on a configured-but-missing chart path is not a transient
+    // failure — it's a user misconfiguration and we shouldn't preserve a
+    // stale set because of it. Any other code (EACCES, EBUSY, EIO, EMFILE,
+    // ...) is treated as transient.
+    const code = (err as NodeJS.ErrnoException).code
+    if (code !== 'ENOENT' && onScanError) onScanError()
     console.error(
       `Error reading charts directory ${dir}:${(err as Error).message}`
     )
@@ -115,7 +127,7 @@ async function scanDir(
       tasks.push(
         (async () => {
           const chart = await limit(() =>
-            openMbtilesFile(entryPath, entry.name)
+            openMbtilesFile(entryPath, entry.name, onScanError)
           )
           if (chart) out.push(chart as ChartProvider)
         })()
@@ -124,12 +136,12 @@ async function scanDir(
       tasks.push(
         (async () => {
           const chart = await limit(() =>
-            directoryToMapInfo(entryPath, entry.name)
+            directoryToMapInfo(entryPath, entry.name, onScanError)
           )
           if (chart) {
             out.push(chart as ChartProvider)
           } else {
-            await scanDir(entryPath, out, depth + 1, limit)
+            await scanDir(entryPath, out, depth + 1, limit, onScanError)
           }
         })()
       )
@@ -145,7 +157,8 @@ interface LoadedMbtiles {
 
 function openMbtilesFile(
   file: string,
-  filename: string
+  filename: string,
+  onScanError?: () => void
 ): Promise<ChartProvider | null> {
   return new Promise<LoadedMbtiles>((resolve, reject) => {
     if (!MBTiles) {
@@ -209,6 +222,7 @@ function openMbtilesFile(
     })
     .catch((e: Error) => {
       console.error(`Error loading chart ${file}`, e.message)
+      if (onScanError) onScanError()
       return null
     })
 }
@@ -233,18 +247,44 @@ function parseVectorLayers(layers: Array<{ id: string }>) {
   return layers.map((l) => l.id)
 }
 
-function directoryToMapInfo(file: string, identifier: string) {
+function directoryToMapInfo(
+  file: string,
+  identifier: string,
+  onScanError?: () => void
+) {
   async function loadInfo() {
     const tilemapResource = path.join(file, 'tilemapresource.xml')
     const metadataJson = path.join(file, 'metadata.json')
+    // ENOENT means "file not present", which is normal — this dir just isn't
+    // a chart and the caller will recurse into it. Any other fs.stat error
+    // (EACCES, EBUSY, EIO, EMFILE, ...) is transient or configuration-level
+    // and should flag the scan so the caller can preserve the last-good set.
     try {
       await fs.stat(tilemapResource)
       return parseTilemapResource(tilemapResource)
-    } catch {
+    } catch (e1) {
+      const code1 = (e1 as NodeJS.ErrnoException).code
+      if (code1 && code1 !== 'ENOENT') {
+        console.warn(
+          `Signal K Charts: fs.stat ${tilemapResource} failed: ${
+            (e1 as Error).message
+          }`
+        )
+        if (onScanError) onScanError()
+      }
       try {
         await fs.stat(metadataJson)
         return parseMetadataJson(metadataJson)
-      } catch {
+      } catch (e2) {
+        const code2 = (e2 as NodeJS.ErrnoException).code
+        if (code2 && code2 !== 'ENOENT') {
+          console.warn(
+            `Signal K Charts: fs.stat ${metadataJson} failed: ${
+              (e2 as Error).message
+            }`
+          )
+          if (onScanError) onScanError()
+        }
         return null
       }
     }
@@ -275,6 +315,7 @@ function directoryToMapInfo(file: string, identifier: string) {
     })
     .catch((e) => {
       console.error(`Error getting charts from ${file}`, e.message)
+      if (onScanError) onScanError()
       return null
     })
 }
