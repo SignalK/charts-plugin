@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Charts">
+  <defs>
+    <linearGradient id="sea" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b6ea8"/>
+      <stop offset="1" stop-color="#0b3a5e"/>
+    </linearGradient>
+    <linearGradient id="land" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f5e6b8"/>
+      <stop offset="1" stop-color="#d9c079"/>
+    </linearGradient>
+    <clipPath id="card">
+      <rect x="0" y="0" width="128" height="128" rx="22"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#card)">
+    <rect width="128" height="128" fill="url(#sea)"/>
+
+    <g stroke="#bee3f4" stroke-opacity="0.35" stroke-width="1" fill="none">
+      <path d="M0 24 H128 M0 48 H128 M0 72 H128 M0 96 H128"/>
+      <path d="M24 0 V128 M48 0 V128 M72 0 V128 M96 0 V128"/>
+    </g>
+
+    <g fill="#bee3f4" fill-opacity="0.55" font-family="system-ui, sans-serif" font-size="6">
+      <text x="3" y="22">48°</text>
+      <text x="3" y="46">47°</text>
+      <text x="3" y="70">46°</text>
+      <text x="3" y="94">45°</text>
+    </g>
+
+    <path d="M14 92
+             Q 22 78, 36 80
+             T 60 70
+             Q 72 66, 78 54
+             Q 84 42, 100 40
+             Q 116 40, 128 48
+             L 128 128
+             L 0 128
+             L 0 96
+             Q 6 92, 14 92 Z"
+          fill="url(#land)" stroke="#8a6d2a" stroke-width="1" stroke-linejoin="round"/>
+
+    <g fill="#8a6d2a" fill-opacity="0.5">
+      <circle cx="46" cy="86" r="1.2"/>
+      <circle cx="58" cy="80" r="1"/>
+      <circle cx="70" cy="68" r="1.2"/>
+      <circle cx="88" cy="52" r="1"/>
+      <circle cx="106" cy="48" r="1.4"/>
+    </g>
+
+    <circle cx="34" cy="40" r="3.5" fill="url(#land)" stroke="#8a6d2a" stroke-width="0.8"/>
+    <circle cx="84" cy="22" r="2.2" fill="url(#land)" stroke="#8a6d2a" stroke-width="0.8"/>
+
+    <path d="M20 30 Q 44 34, 58 48 T 96 70"
+          fill="none" stroke="#e63946" stroke-width="1.6" stroke-linecap="round"
+          stroke-dasharray="3 3"/>
+    <circle cx="20" cy="30" r="2.4" fill="#e63946"/>
+    <g transform="translate(96 70)" stroke="#e63946" stroke-width="1.8" stroke-linecap="round">
+      <line x1="-3" y1="-3" x2="3" y2="3"/>
+      <line x1="-3" y1="3" x2="3" y2="-3"/>
+    </g>
+
+    <g transform="translate(108 104)">
+      <circle r="10" fill="#0b3a5e" fill-opacity="0.7" stroke="#bee3f4" stroke-width="0.8"/>
+      <polygon points="0,-8 2,0 0,0" fill="#e63946"/>
+      <polygon points="0,-8 -2,0 0,0" fill="#b5232f"/>
+      <polygon points="0,8 2,0 0,0" fill="#e2e8f0"/>
+      <polygon points="0,8 -2,0 0,0" fill="#cbd5e1"/>
+      <circle r="1" fill="#e2e8f0"/>
+      <text x="0" y="-11" text-anchor="middle" font-family="system-ui, sans-serif"
+            font-size="5" font-weight="700" fill="#e63946">N</text>
+    </g>
+  </g>
+</svg>
