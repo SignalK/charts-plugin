@@ -32,6 +32,10 @@
     "name": "Mikko Vesikkala",
     "email": "mikko.vesikkala@iki.fi"
   },
+  "signalk": {
+    "displayName": "SK Charts",
+    "appIcon": "./logo.svg"
+  },
   "dependencies": {
     "@signalk/mbtiles": "0.1.1",
     "@signalk/server-api": "^2.0.0",
