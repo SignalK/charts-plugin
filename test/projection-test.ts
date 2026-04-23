@@ -54,6 +54,26 @@ describe('projection: tileToBBox', () => {
     expect(bbox[0]).to.be.lessThan(bbox[2])
     expect(bbox[1]).to.be.lessThan(bbox[3])
   })
+
+  // Out-of-range x/y at a given zoom silently produced bbox coordinates
+  // outside the real-world range; downstream bbox math (turf) then operated
+  // on nonsense, turning a caller bug into a silent wrong-result. Fail fast.
+  it('throws for y at or above 2^z', () => {
+    // at z=2 the valid y range is [0, 3]; y=4 is outside the grid
+    expect(() => tileToBBox(0, 4, 2)).to.throw(RangeError)
+  })
+
+  it('throws for y below 0', () => {
+    expect(() => tileToBBox(0, -1, 2)).to.throw(RangeError)
+  })
+
+  it('throws for x at or above 2^z', () => {
+    expect(() => tileToBBox(4, 0, 2)).to.throw(RangeError)
+  })
+
+  it('throws for x below 0', () => {
+    expect(() => tileToBBox(-1, 0, 2)).to.throw(RangeError)
+  })
 })
 
 describe('projection: lonLatToMercator', () => {

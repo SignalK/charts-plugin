@@ -231,9 +231,11 @@ describe('GET /signalk/chart-tiles/:identifier/:z/:x/:y', () => {
   })
 
   it('returns 404 for missing tile', () => {
+    // Valid in-grid coordinates (2^5 = 32) but no file on disk: the TMS
+    // fixture only ships a small band in x/y.
     return plugin
       .start({})
-      .then(() => get(testServer, '/signalk/chart-tiles/tms-tiles/5/55/10'))
+      .then(() => get(testServer, '/signalk/chart-tiles/tms-tiles/5/10/10'))
       .catch((e) => e.response)
       .then((response) => {
         expect(response.status).to.equal(404)
@@ -247,6 +249,52 @@ describe('GET /signalk/chart-tiles/:identifier/:z/:x/:y', () => {
       .catch((e) => e.response)
       .then((response) => {
         expect(response.status).to.equal(404)
+      })
+  })
+
+  // Tile coordinate validation: out-of-range z / x / y. The Express regex only
+  // accepts digits, so validation covers the non-negative-but-bogus range
+  // (zoom above MAX_ZOOM, x or y at or above 2^z). z=0 is accepted because
+  // Leaflet's default minZoom is 0 — rejecting it would break legitimate
+  // framing requests from standard map clients.
+  it('accepts z=0 (Leaflet default minZoom) and 404s when the tile is absent', () => {
+    return plugin
+      .start({})
+      .then(() => get(testServer, '/signalk/chart-tiles/unpacked-tiles/0/0/0'))
+      .catch((e) => e.response)
+      .then((response) => {
+        expect(response.status).to.equal(404)
+      })
+  })
+
+  it('returns 400 for zoom above MAX_ZOOM (z=25)', () => {
+    return plugin
+      .start({})
+      .then(() => get(testServer, '/signalk/chart-tiles/unpacked-tiles/25/0/0'))
+      .catch((e) => e.response)
+      .then((response) => {
+        expect(response.status).to.equal(400)
+      })
+  })
+
+  it('returns 400 for x at the zoom boundary (x = 2^z)', () => {
+    // at z=4, valid x range is [0, 15]; x=16 is out of range
+    return plugin
+      .start({})
+      .then(() => get(testServer, '/signalk/chart-tiles/unpacked-tiles/4/16/0'))
+      .catch((e) => e.response)
+      .then((response) => {
+        expect(response.status).to.equal(400)
+      })
+  })
+
+  it('returns 400 for y at the zoom boundary (y = 2^z)', () => {
+    return plugin
+      .start({})
+      .then(() => get(testServer, '/signalk/chart-tiles/unpacked-tiles/4/0/16'))
+      .catch((e) => e.response)
+      .then((response) => {
+        expect(response.status).to.equal(400)
       })
   })
 })
@@ -400,6 +448,87 @@ describe('tile cache HTTP endpoints', () => {
       .execute(`http://localhost:${serverPort(testServer)}`)
       .post('/signalk/chart-tiles/cache/proxy-test')
       .send({ bbox: { minLon: 0, minLat: 0, maxLon: 1, maxLat: 1 } })
+      .catch((e) => e.response)
+    expect(res.status).to.equal(400)
+  })
+
+  // Zoom-validation checks run before bbox/tile inspection so the caller gets
+  // the most-specific rejection instead of a generic 500 from a downstream
+  // NaN-in-tile-math failure.
+  it('POST /cache/:identifier returns 400 for non-numeric maxZoom', async () => {
+    await plugin.start({ onlineChartProviders: [proxyProvider] })
+    const res = await chai.request
+      .execute(`http://localhost:${serverPort(testServer)}`)
+      .post('/signalk/chart-tiles/cache/proxy-test')
+      .send({
+        maxZoom: 'banana',
+        bbox: { minLon: 0, minLat: 0, maxLon: 1, maxLat: 1 }
+      })
+      .catch((e) => e.response)
+    expect(res.status).to.equal(400)
+  })
+
+  it('POST /cache/:identifier returns 400 for maxZoom above 24', async () => {
+    await plugin.start({ onlineChartProviders: [proxyProvider] })
+    const res = await chai.request
+      .execute(`http://localhost:${serverPort(testServer)}`)
+      .post('/signalk/chart-tiles/cache/proxy-test')
+      .send({
+        maxZoom: '25',
+        bbox: { minLon: 0, minLat: 0, maxLon: 1, maxLat: 1 }
+      })
+      .catch((e) => e.response)
+    expect(res.status).to.equal(400)
+  })
+
+  it('POST /cache/:identifier returns 400 for inverted bbox (minLat > maxLat)', async () => {
+    await plugin.start({ onlineChartProviders: [proxyProvider] })
+    const res = await chai.request
+      .execute(`http://localhost:${serverPort(testServer)}`)
+      .post('/signalk/chart-tiles/cache/proxy-test')
+      .send({
+        maxZoom: '5',
+        bbox: { minLon: 0, minLat: 10, maxLon: 1, maxLat: 5 }
+      })
+      .catch((e) => e.response)
+    expect(res.status).to.equal(400)
+  })
+
+  it('POST /cache/:identifier returns 400 for out-of-range latitude', async () => {
+    await plugin.start({ onlineChartProviders: [proxyProvider] })
+    const res = await chai.request
+      .execute(`http://localhost:${serverPort(testServer)}`)
+      .post('/signalk/chart-tiles/cache/proxy-test')
+      .send({
+        maxZoom: '5',
+        bbox: { minLon: 0, minLat: -91, maxLon: 1, maxLat: 90 }
+      })
+      .catch((e) => e.response)
+    expect(res.status).to.equal(400)
+  })
+
+  it('POST /cache/:identifier returns 400 for out-of-range longitude', async () => {
+    await plugin.start({ onlineChartProviders: [proxyProvider] })
+    const res = await chai.request
+      .execute(`http://localhost:${serverPort(testServer)}`)
+      .post('/signalk/chart-tiles/cache/proxy-test')
+      .send({
+        maxZoom: '5',
+        bbox: { minLon: -181, minLat: 0, maxLon: 181, maxLat: 10 }
+      })
+      .catch((e) => e.response)
+    expect(res.status).to.equal(400)
+  })
+
+  it('POST /cache/:identifier returns 400 for non-finite bbox value', async () => {
+    await plugin.start({ onlineChartProviders: [proxyProvider] })
+    const res = await chai.request
+      .execute(`http://localhost:${serverPort(testServer)}`)
+      .post('/signalk/chart-tiles/cache/proxy-test')
+      .send({
+        maxZoom: '5',
+        bbox: { minLon: 'nope', minLat: 0, maxLon: 1, maxLat: 1 }
+      })
       .catch((e) => e.response)
     expect(res.status).to.equal(400)
   })

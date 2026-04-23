@@ -2,7 +2,7 @@ import path from 'path'
 import { XMLParser } from 'fast-xml-parser'
 import { Dirent, promises as fs } from 'fs'
 import pLimit from 'p-limit'
-import { ChartProvider } from './types'
+import { ChartProvider, MBTilesHandle, MBTilesMetadata } from './types'
 
 // Parses tilemapresource.xml into a plain object. ignoreAttributes=false and
 // attributeNamePrefix='' drop the default '@_' prefix so XML attributes show
@@ -31,9 +31,14 @@ const xmlParser = new XMLParser({
   parseAttributeValue: false
 })
 
-// Dynamically load MBTiles to prevent module load failure
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let MBTiles: any = null
+type MBTilesConstructor = new (
+  file: string,
+  callback: (err: Error | null, mbtiles: MBTilesHandle) => void
+) => MBTilesHandle
+
+// Dynamically load MBTiles to prevent module load failure when the native
+// SQLite dependency is unavailable (e.g. bare test environments).
+let MBTiles: MBTilesConstructor | null = null
 let mbtilesLoadError: Error | null = null
 
 async function loadMBTiles() {
@@ -133,67 +138,87 @@ async function scanDir(
   await Promise.all(tasks)
 }
 
-function openMbtilesFile(file: string, filename: string) {
-  return (
-    new Promise((resolve, reject) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      new MBTiles(file, (err: Error, mbtiles: any) => {
-        if (err) {
-          return reject(err)
-        }
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        mbtiles.getInfo((err: Error, metadata: any) => {
-          if (err) {
-            return reject(err)
-          }
-          return resolve({ mbtiles, metadata })
-        })
+interface LoadedMbtiles {
+  mbtiles: MBTilesHandle
+  metadata: MBTilesMetadata
+}
+
+function openMbtilesFile(
+  file: string,
+  filename: string
+): Promise<ChartProvider | null> {
+  return new Promise<LoadedMbtiles>((resolve, reject) => {
+    if (!MBTiles) {
+      reject(mbtilesLoadError ?? new Error('MBTiles module not loaded'))
+      return
+    }
+    new MBTiles(file, (err, mbtiles) => {
+      if (err) return reject(err)
+      mbtiles.getInfo((infoErr, metadata) => {
+        if (infoErr) return reject(infoErr)
+        resolve({ mbtiles, metadata })
       })
     })
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .then((res: any) => {
-        if (
-          !res.metadata ||
-          Object.keys(res.metadata).length === 0 ||
-          res.metadata.bounds === undefined
-        ) {
-          return null
-        }
-        const identifier = filename.replace(/\.mbtiles$/i, '')
-        const data: ChartProvider = {
-          _fileFormat: 'mbtiles',
-          _filePath: file,
-          _mbtilesHandle: res.mbtiles,
-          _flipY: false,
-          identifier,
-          name: res.metadata.name || res.metadata.id,
-          description: res.metadata.description,
-          bounds: res.metadata.bounds,
-          minzoom: res.metadata.minzoom,
-          maxzoom: res.metadata.maxzoom,
-          format: res.metadata.format,
-          type: 'tilelayer',
-          scale: parseInt(res.metadata.scale) || 250000,
-          v1: {
-            tilemapUrl: `~tilePath~/${identifier}/{z}/{x}/{y}`,
-            chartLayers: res.metadata.vector_layers
-              ? parseVectorLayers(res.metadata.vector_layers)
-              : []
-          },
-          v2: {
-            url: `~tilePath~/${identifier}/{z}/{x}/{y}`,
-            layers: res.metadata.vector_layers
-              ? parseVectorLayers(res.metadata.vector_layers)
-              : []
-          }
-        }
-        return data
-      })
-      .catch((e: Error) => {
-        console.error(`Error loading chart ${file}`, e.message)
+  })
+    .then(({ mbtiles, metadata }) => {
+      if (
+        !metadata ||
+        Object.keys(metadata).length === 0 ||
+        metadata.bounds === undefined
+      ) {
         return null
-      })
-  )
+      }
+      const identifier = filename.replace(/\.mbtiles$/i, '')
+      const boundsArray = parseBoundsFromMetadata(metadata.bounds)
+      const data: ChartProvider = {
+        _fileFormat: 'mbtiles',
+        _filePath: file,
+        _mbtilesHandle: mbtiles,
+        _flipY: false,
+        identifier,
+        name: metadata.name || metadata.id || identifier,
+        description: metadata.description ?? '',
+        bounds: boundsArray,
+        minzoom: metadata.minzoom,
+        maxzoom: metadata.maxzoom,
+        format: metadata.format,
+        type: 'tilelayer',
+        scale: parseInt(metadata.scale ?? '') || 250000,
+        v1: {
+          tilemapUrl: `~tilePath~/${identifier}/{z}/{x}/{y}`,
+          chartLayers: metadata.vector_layers
+            ? parseVectorLayers(metadata.vector_layers)
+            : []
+        },
+        v2: {
+          url: `~tilePath~/${identifier}/{z}/{x}/{y}`,
+          layers: metadata.vector_layers
+            ? parseVectorLayers(metadata.vector_layers)
+            : []
+        }
+      }
+      return data
+    })
+    .catch((e: Error) => {
+      console.error(`Error loading chart ${file}`, e.message)
+      return null
+    })
+}
+
+// MBTiles spec stores bounds as "minLon,minLat,maxLon,maxLat"; some writers
+// normalise it to an array already. Accept both.
+function parseBoundsFromMetadata(
+  bounds: number[] | string | undefined
+): number[] | undefined {
+  if (bounds === undefined) return undefined
+  if (Array.isArray(bounds)) return bounds
+  if (typeof bounds === 'string') {
+    const parts = bounds.split(',').map((b) => parseFloat(b.trim()))
+    return parts.length === 4 && parts.every(Number.isFinite)
+      ? parts
+      : undefined
+  }
+  return undefined
 }
 
 function parseVectorLayers(layers: Array<{ id: string }>) {
