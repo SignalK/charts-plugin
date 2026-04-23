@@ -26,6 +26,9 @@ export interface MBTilesHandle {
     callback: (err: Error | null, metadata: MBTilesMetadata) => void
   ) => void
   close: (callback: (err: Error | null) => void) => void
+  // MBTiles inherits from EventEmitter. We only need 'error' so an unhandled
+  // event doesn't bring down the node process.
+  on: (event: 'error', listener: (err: Error) => void) => MBTilesHandle
 }
 
 // MBTiles metadata rows relevant to the plugin. `bounds` is commonly a
