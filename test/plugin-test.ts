@@ -31,6 +31,7 @@ const expect = chai.expect
 type PluginInstance = {
   start: (settings: object) => Promise<void>
   stop: () => void
+  schema?: () => unknown
 }
 
 // TestApp intentionally omits most of ServerAPI since these are
@@ -215,6 +216,32 @@ describe('GET /resources/charts', () => {
           )} + 1 online provider`
         )
       })
+  })
+
+  it('config schema chartPaths description omits scan info before first start (issue #8)', () => {
+    const schema = getChartPathsSchema(plugin)
+    expect(schema.description).to.match(
+      /^Add one or more paths to find charts\. Defaults to/
+    )
+    expect(schema.description).to.not.include('Last scan')
+  })
+
+  it('config schema chartPaths description shows per-path counts after load (issue #8)', () => {
+    return plugin.start({ chartPaths: ['charts', 'charts-2'] }).then(() => {
+      const schema = getChartPathsSchema(plugin)
+      expect(schema.description).to.include(
+        `Last scan: ${path.resolve(__dirname, 'charts')} (3 charts), ${path.resolve(__dirname, 'charts-2')} (1 chart)`
+      )
+    })
+  })
+
+  it('config schema chartPaths description reports zero charts when path is empty (issue #8)', () => {
+    return plugin.start({ chartPaths: ['../src/'] }).then(() => {
+      const schema = getChartPathsSchema(plugin)
+      expect(schema.description).to.include(
+        `Last scan: ${path.resolve(__dirname, '../src')} (0 charts)`
+      )
+    })
   })
 })
 
@@ -744,6 +771,18 @@ const get = (server: http.Server, location: string) => {
   }
   const baseUrl = `http://localhost:${address.port}`
   return chai.request.execute(baseUrl).get(location)
+}
+
+const getChartPathsSchema = (plugin: PluginInstance) => {
+  const schema = plugin.schema?.() as {
+    properties: {
+      chartPaths: { description: string }
+    }
+  }
+  if (!schema?.properties?.chartPaths) {
+    throw new Error('schema() did not return chartPaths')
+  }
+  return schema.properties.chartPaths
 }
 
 const serverPort = (server: http.Server): number => {
