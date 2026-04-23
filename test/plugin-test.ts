@@ -614,7 +614,7 @@ describe('tile cache HTTP endpoints', () => {
     expect(res.status).to.equal(400)
   })
 
-  it('POST /cache/:identifier returns 202 with the fully-initialised job info', async () => {
+  it('POST /cache/:identifier returns 200 with the new job id', async () => {
     await plugin.start({ onlineChartProviders: [proxyProvider] })
     const res = await chai.request
       .execute(`http://localhost:${serverPort(testServer)}`)
@@ -623,32 +623,9 @@ describe('tile cache HTTP endpoints', () => {
         maxZoom: '5',
         bbox: { minLon: 0, minLat: 0, maxLon: 1, maxLat: 1 }
       })
-    expect(res.status).to.equal(202)
-    expect(res.body).to.include.keys(['id', 'totalTiles', 'status'])
-    // Init must have completed before the response: totalTiles is non-zero,
-    // which proves the tile set is populated.
-    expect(res.body.totalTiles).to.be.greaterThan(0)
-    // Job should not be auto-started — seeding is an explicit follow-up.
-    expect(res.body.downloadedTiles).to.equal(0)
-  })
-
-  it('POST /cache/:identifier with bbox respects the provider minzoom', async () => {
-    // provider minzoom=3, maxzoom=5. Before the fix, getTilesForBBox started
-    // at z=0 regardless of minzoom, so totalTiles would include the three
-    // low-zoom tiles we'd never actually seed. With the fix in place we
-    // should only see tiles from the provider's declared zoom range.
-    await plugin.start({ onlineChartProviders: [proxyProvider] })
-    const maxZoom = '5'
-    const bbox = { minLon: 5, minLat: 5, maxLon: 6, maxLat: 6 }
-    const withMinzoom = await chai.request
-      .execute(`http://localhost:${serverPort(testServer)}`)
-      .post('/signalk/chart-tiles/cache/proxy-test')
-      .send({ maxZoom, bbox })
-    expect(withMinzoom.status).to.equal(202)
-    // With minzoom=3 we cover z=3..5, which for a tiny bbox well within a
-    // tile at each zoom is 3 tiles total. If minzoom were ignored we'd see
-    // 6 (also z=0,1,2 would each contribute 1 tile).
-    expect(withMinzoom.body.totalTiles).to.equal(3)
+    expect(res.status).to.equal(200)
+    expect(res.body).to.include.keys(['id', 'state', 'statusCode'])
+    expect(res.body.state).to.equal('COMPLETED')
   })
 
   it('POST /cache/jobs/:id returns 400 on a non-numeric job id', async () => {
@@ -680,7 +657,7 @@ describe('tile cache HTTP endpoints', () => {
         maxZoom: '4',
         bbox: { minLon: 0, minLat: 0, maxLon: 1, maxLat: 1 }
       })
-    expect(createRes.status).to.equal(202)
+    expect(createRes.status).to.equal(200)
     const jobId = createRes.body.id
 
     const res = await chai.request

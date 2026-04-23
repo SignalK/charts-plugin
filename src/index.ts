@@ -5,7 +5,12 @@ import { findCharts } from './charts'
 import { apiRoutePrefix } from './constants'
 import { composeStatus, ChartPathCount } from './pluginStatus'
 import { ChartProvider, MBTilesHandle, OnlineChartProvider } from './types'
-import { ChartSeedingManager, Tile } from './chartDownloader'
+import {
+  ChartSeedingManager,
+  ChartDownloader,
+  JobOptions
+} from './chartDownloader'
+import { openOrCreateMbtiles } from './chartDownloaderMBTilesHelpers'
 import {
   MAX_ZOOM,
   MIN_ZOOM,
@@ -180,9 +185,9 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
               type: 'string',
               title: 'Format',
               default: 'png',
-              enum: ['png', 'jpg', 'pbf'],
+              enum: ['png', 'jpg', 'pbf', 'mvt', 'webp'],
               description:
-                'Format of map tiles: raster (png, jpg, etc.) / vector (pbf).'
+                'Format of map tiles: raster (png, jpg, webp, etc.) / vector (pbf, mvt).'
             },
             url: {
               type: 'string',
@@ -385,6 +390,28 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
       }
       chartProviders[id] = provider as ChartProvider
     }
+
+    // Open / create an mbtiles cache file for every proxy provider so downloaded
+    // tiles can be persisted in the standard mbtiles format alongside the flat
+    // filesystem layout. Failure to open doesn't take the provider out — tile
+    // requests fall back to the existing flat-file cache path.
+    for (const provider of Object.values(chartProviders)) {
+      if (provider.proxy === true) {
+        try {
+          provider._mbtilesHandle = await openOrCreateMbtiles(
+            path.join(cachePath, `${provider.identifier}.mbtiles_`),
+            provider
+          )
+        } catch (err) {
+          app.debug(
+            `Could not open mbtiles cache for ${provider.identifier}: ${
+              (err as Error).message
+            }`
+          )
+        }
+      }
+    }
+
     buildSanitizedCache()
     app.setPluginStatus(
       composeStatus(perPath, Object.keys(activeOnlineProviders).length)
@@ -544,6 +571,30 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
       }
     )
 
+    app.post(`${chartTilesPath}/cache/regions`, (req, res) => {
+      const geojson = req.body
+      const p = path.join(app.getDataDirPath(), 'regions.json')
+      fs.writeFileSync(p, JSON.stringify(geojson, null, 2))
+      // TODO: return json with signalk response format
+      return res.send({ status: 'ok' })
+    })
+
+    app.get(`${chartTilesPath}/cache/regions`, (_req, res) => {
+      const p = path.join(app.getDataDirPath(), 'regions.json')
+      try {
+        const raw = fs.readFileSync(p, 'utf8')
+        const data = JSON.parse(raw)
+        return res.json(data)
+      } catch (_e) {
+        return res.json({ type: 'FeatureCollection', features: [] })
+      }
+    })
+
+    app.get(`${chartTilesPath}/cache/stats`, (_req, res) => {
+      const data = ChartDownloader.getStatistics()
+      return res.json(data)
+    })
+
     app.post(
       `${chartTilesPath}/cache/:identifier`,
       async (req: Request, res: Response) => {
@@ -551,17 +602,20 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
         if (!identifier) {
           return res.sendStatus(404)
         }
-        const { regionGUID, tile, bbox, maxZoom } = req.body as {
-          regionGUID?: string
-          tile?: Tile // query params come in as strings
-          bbox?: {
-            minLon: number
-            minLat: number
-            maxLon: number
-            maxLat: number
+        const { feature, bbox, minZoom, maxZoom, action, options } =
+          req.body as {
+            feature?: GeoJSON.Feature<GeoJSON.Geometry>
+            bbox?: {
+              minLon: number
+              minLat: number
+              maxLon: number
+              maxLat: number
+            }
+            minZoom?: string
+            maxZoom?: string
+            action?: string
+            options?: JobOptions
           }
-          maxZoom?: string
-        }
         const provider = chartProviders[identifier]
         if (!provider) {
           return res.status(404).send('Provider not found')
@@ -569,15 +623,17 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
         if (!maxZoom) {
           return res.status(400).send('maxZoom parameter is required')
         }
-        if (!regionGUID && !bbox && !tile) {
-          return res
-            .status(400)
-            .send('Request must include regionGUID, bbox, or tile')
+        if (!feature && !bbox) {
+          return res.status(400).send('Request must include feature or bbox')
         }
+        const minZoomParsed = parseInt(minZoom ?? '1')
         const maxZoomParsed = parseInt(maxZoom)
-        const zoomError = validateMaxZoom(maxZoomParsed)
-        if (zoomError) {
-          return res.status(400).send(zoomError)
+        const maxZoomError = validateMaxZoom(maxZoomParsed)
+        if (maxZoomError) {
+          return res.status(400).send(maxZoomError)
+        }
+        if (Number.isFinite(minZoomParsed) && validateMaxZoom(minZoomParsed)) {
+          return res.status(400).send(`Invalid minZoom ${minZoomParsed}`)
         }
         if (bbox) {
           const bboxError = validateBBox(bbox)
@@ -585,28 +641,29 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
             return res.status(400).send(bboxError)
           }
         }
-        if (tile) {
-          const tileError = validateTileCoords(tile.z, tile.x, tile.y)
-          if (tileError) {
-            return res.status(400).send(tileError)
-          }
-        }
         try {
           const job = await ChartSeedingManager.createJob(
-            app.resourcesApi,
             cachePath,
             provider,
+            options ?? { refetch: false, mbtiles: false, vacuum: false },
+            minZoomParsed,
             maxZoomParsed,
-            regionGUID,
+            feature,
             bbox
               ? [bbox.minLon, bbox.minLat, bbox.maxLon, bbox.maxLat]
-              : undefined,
-            tile
+              : undefined
           )
-          // Job is registered and its tile set is known, but nothing has been
-          // downloaded yet — the caller starts it with
-          // POST /cache/jobs/:id { action: 'start' }.
-          return res.status(202).json(job.info())
+          if (action === 'start' || bbox) {
+            job.seedCache()
+          } else if (action === 'delete') {
+            job.deleteCache()
+          }
+          return res.status(200).json({
+            state: 'COMPLETED',
+            statusCode: 200,
+            message: 'Successfully added new job',
+            id: `${job.ID}`
+          })
         } catch (err) {
           return res
             .status(500)
@@ -648,6 +705,9 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
         } else if (action === 'delete') {
           job.deleteCache()
         } else if (action === 'remove') {
+          // Cancel first so an in-flight seed doesn't mutate the entry
+          // after we drop it from the registry.
+          job.cancelJob()
           delete ChartSeedingManager.ActiveJobs[parsedId]
         } else {
           return res.status(400).send(`Unknown action: ${action}`)
