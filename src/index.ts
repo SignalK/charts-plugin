@@ -3,6 +3,7 @@ import fs, { FSWatcher } from 'fs'
 import * as _ from 'lodash'
 import { findCharts } from './charts'
 import { apiRoutePrefix } from './constants'
+import { composeStatus, ChartPathCount } from './pluginStatus'
 import { ChartProvider, MBTilesHandle, OnlineChartProvider } from './types'
 import { ChartSeedingManager, Tile } from './chartDownloader'
 import {
@@ -330,9 +331,13 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
     // O(N²) property copies for identical keys while adding nothing over a
     // plain shallow assignment.
     const newCharts: { [key: string]: ChartProvider } = {}
-    for (const r of results) {
-      if (!r) continue
-      for (const [id, chart] of Object.entries(r)) {
+    const perPath: ChartPathCount[] = []
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i]
+      const chartPath = activeChartPaths[i] ?? ''
+      const pathEntries = r ? Object.entries(r) : []
+      perPath.push({ chartPath, count: pathEntries.length })
+      for (const [id, chart] of pathEntries) {
         if (newCharts[id]) {
           app.debug(
             `Duplicate chart identifier "${id}" from multiple chart paths; ` +
@@ -363,7 +368,7 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
     }
     buildSanitizedCache()
     app.setPluginStatus(
-      `Started - ${Object.keys(chartProviders).length} chart(s) loaded`
+      composeStatus(perPath, Object.keys(activeOnlineProviders).length)
     )
   }
 

@@ -54,11 +54,13 @@ const TMP_BASE = path.resolve(__dirname, '.tmp')
 describe('GET /resources/charts', () => {
   let plugin: PluginInstance
   let testServer: http.Server
+  let testApp: TestApp
 
   beforeEach(() =>
     createDefaultApp().then(({ app, server }) => {
       plugin = asPluginApp(app)
       testServer = server
+      testApp = app
     })
   )
   afterEach((done) => {
@@ -170,6 +172,48 @@ describe('GET /resources/charts', () => {
       .catch((e) => e.response)
       .then((result) => {
         expect(result.status).to.equal(404)
+      })
+  })
+  it('publishes per-path chart counts in the plugin status banner (issue #8)', () => {
+    return plugin.start({ chartPaths: ['charts', 'charts-2'] }).then(() => {
+      expect(testApp.lastPluginStatus).to.equal(
+        `Started - Found 4 charts: ${path.resolve(
+          __dirname,
+          'charts'
+        )} (3), ${path.resolve(__dirname, 'charts-2')} (1)`
+      )
+    })
+  })
+
+  it('reports 0 charts from the configured path when the path is empty (issue #8)', () => {
+    return plugin.start({ chartPaths: ['../src/'] }).then(() => {
+      expect(testApp.lastPluginStatus).to.equal(
+        `Started - Found 0 charts from ${path.resolve(__dirname, '../src')}`
+      )
+    })
+  })
+
+  it('includes online provider count in the status banner', () => {
+    return plugin
+      .start({
+        chartPaths: ['charts'],
+        onlineChartProviders: [
+          {
+            name: 'Test Name',
+            minzoom: 2,
+            maxzoom: 15,
+            format: 'jpg',
+            url: 'https://example.com'
+          }
+        ]
+      })
+      .then(() => {
+        expect(testApp.lastPluginStatus).to.equal(
+          `Started - Found 3 charts from ${path.resolve(
+            __dirname,
+            'charts'
+          )} + 1 online provider`
+        )
       })
   })
 })
@@ -663,6 +707,7 @@ interface TestApp extends express.Express {
   statusMessage: () => string
   setPluginStatus: (pluginId: string, status: string) => void
   setPluginError: (pluginId: string, status: string) => void
+  lastPluginStatus?: string
 }
 
 const createDefaultApp = (): Promise<{ app: TestApp; server: http.Server }> => {
@@ -672,7 +717,11 @@ const createDefaultApp = (): Promise<{ app: TestApp; server: http.Server }> => {
   app.statusMessage = () => 'started'
   app.error = () => undefined
   app.debug = () => undefined
-  app.setPluginStatus = () => undefined
+  // Single-arg signature matches what the plugin actually calls at runtime;
+  // the ServerAPI type is (id, status) but Signal K server binds the id.
+  app.setPluginStatus = ((status: string) => {
+    app.lastPluginStatus = status
+  }) as unknown as TestApp['setPluginStatus']
   app.setPluginError = () => undefined
 
   return new Promise((resolve) => {
