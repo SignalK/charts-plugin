@@ -197,6 +197,20 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
                 'Create a proxy to serve remote tiles and cache fetched tiles from the remote server, to serve them locally on subsequent requests. Use webapp to configure seeding jobs to prefetch tiles to local cache.',
               default: false
             },
+            onlySea: {
+              type: 'boolean',
+              title: 'Download only sea tiles',
+              description:
+                'If enabled, only tiles that contain sea will be downloaded. Land-only tiles will be skipped.',
+              default: false
+            },
+            onlyLand: {
+              type: 'boolean',
+              title: 'Download only land tiles',
+              description:
+                'If enabled, only tiles that contain land will be downloaded. Sea-only tiles will be skipped.',
+              default: false
+            },
             headers: {
               type: 'array',
               title: 'Headers',
@@ -778,6 +792,8 @@ const convertOnlineProviderConfig = (provider: OnlineChartProvider) => {
       layers: provider.layers ? provider.layers : null
     },
     proxy: provider.proxy ? provider.proxy : false,
+    onlySea: provider.onlySea ? provider.onlySea : true,
+    onlyLand: provider.onlyLand ? provider.onlyLand : false,
     remoteUrl: provider.proxy ? provider.url : null,
     headers: parseHeaders(provider.headers)
   }

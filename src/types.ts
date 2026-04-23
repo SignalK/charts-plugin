@@ -68,6 +68,8 @@ export interface ChartProvider {
   style?: string
   layers?: string[]
   proxy?: boolean
+  onlySea?: boolean
+  onlyLand?: boolean
   remoteUrl?: string
   headers?: { [key: string]: string }
 }
@@ -81,6 +83,8 @@ export interface OnlineChartProvider {
   format: 'png' | 'jpg'
   url: string
   proxy: boolean
+  onlySea?: boolean
+  onlyLand?: boolean
   headers?: string[]
   style: string
   layers: string[]

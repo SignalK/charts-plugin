@@ -331,6 +331,27 @@ export class ChartDownloader {
     if (!provider.remoteUrl) {
       return null
     }
+
+    const hasSeaOrLandFilter = provider.onlySea !== provider.onlyLand;
+    if (hasSeaOrLandFilter) {
+      const isSea = require('is-sea');
+      const isLand = (lat: number, lon: number) => !isSea(lat, lon);
+      const [minLon, minLat, maxLon, maxLat] = tileToBBox(
+        tile.x,
+        tile.y,
+        tile.z
+      )
+      
+      const hasSea = isSea(minLat, minLon) || isSea(minLat, maxLon) || isSea(maxLat, minLon) || isSea(maxLat, maxLon);
+      const hasLand = isLand(minLat, minLon) || isLand(minLat, maxLon) || isLand(maxLat, minLon) || isLand(maxLat, maxLon);
+      if (provider.onlySea && !hasSea) {
+        return null;
+      }
+      if (provider.onlyLand && !hasLand) {
+        return null;
+      }
+    }
+
     let url = provider.remoteUrl
       .replace('{z}', tile.z.toString())
       // To be able to handle NOAA WMTS caching as a tilemap source with -2 offset
