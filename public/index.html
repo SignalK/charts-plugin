@@ -1,129 +1,414 @@
 <!doctype html>
 <html>
   <head>
-    <link rel="stylesheet" href="style.css" />
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1"
+    />
     <title>Signalk charts-addin</title>
+    <link rel="stylesheet" href="style.css" />
+    <script src="js/jquery-3.5.1.min.js"></script>
+    <!-- <link rel="stylesheet" href="leaflet/leaflet.css" />
+    <script src="leaflet/leaflet.js"></script> -->
+    <link
+      rel="stylesheet"
+      href="leaflet/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
+    <script
+      src="leaflet/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+
+    <link rel="stylesheet" href="leaflet/leaflet.draw.css" />
+    <script src="leaflet/leaflet.draw.js"></script>
   </head>
-
   <body>
-    <fieldset>
-      <legend>Seed charts to prefetch tiles for offline usage.</legend>
-      <strong>Select chart provider:</strong><br />
-      <label for="chart">Chart:</label>
-      <select id="chart" name="chart" required></select>
-      <br />
-      <strong>Select region type:</strong>
-      <br />
-      <!-- Choice 1: Predefined Region -->
-      <label>
-        <input type="radio" name="inputType" value="region" checked />
-        Region
-      </label>
-      <select id="region" name="region"></select>
+    <div id="map" style="width: 100%; height: 100vh"></div>
 
-      <br />
+    <div id="jobsModal" class="modal hidden">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>Job Progress</h3>
+          <button id="closeJobsModal" onclick="toggleJobsModal()">✖</button>
+        </div>
 
-      <!-- Choice 2: Bounding Box -->
-      <label>
-        <input type="radio" name="inputType" value="bbox" />
-        Bounding Box (minLon, minLat, maxLon, maxLat) West to East, South to
-        North
-      </label>
-      <div>
-        <input
-          type="number"
-          id="bboxMinLon"
-          placeholder="minLon"
-          step="0.0001"
-          disabled
-          value="16.51"
-        />
-        <input
-          type="number"
-          id="bboxMinLat"
-          placeholder="minLat"
-          step="0.0001"
-          disabled
-          value="58.59"
-        />
-        <input
-          type="number"
-          id="bboxMaxLon"
-          placeholder="maxLon"
-          step="0.0001"
-          disabled
-          value="16.60"
-        />
-        <input
-          type="number"
-          id="bboxMaxLat"
-          placeholder="maxLat"
-          step="0.0001"
-          disabled
-          value="58.65"
-        />
+        <div id="jobsScroll">
+          <div id="jobsGrid" class="job-cards"></div>
+        </div>
+        <span id="noJobsMessage" class="hidden"
+          >No jobs added, click on region to add seeding job</span
+        >
+        <template id="job-card-template">
+          <div class="job-card">
+            <div class="job-card-header">
+              <div>
+                <strong class="job-region"></strong>
+                <div class="job-chart"></div>
+              </div>
+              <button class="job-remove" title="Remove job from this list">
+                &times;
+              </button>
+            </div>
+
+            <div class="job-status"></div>
+            <div class="job-card-progress"></div>
+
+            <div class="job-card-stats-actions">
+              <div class="job-card-stats">
+                <div>Total: <span class="job-total"></span></div>
+                <div class="job-seed hidden">
+                  <div>Downloaded: <span class="job-downloaded"></span></div>
+                  <div>Cached: <span class="job-cached"></span></div>
+                  <div>Failed: <span class="job-failed"></span></div>
+                </div>
+                <div class="job-delete hidden">
+                  <div>Deleted: <span class="job-deleted"></span></div>
+                </div>
+              </div>
+
+              <!-- <div class="job-startstop job-card-actions">
+                <button class="btn btn--primary" title="StartStop">Start</button>
+              </div> -->
+            </div>
+          </div>
+        </template>
       </div>
-      <!-- Choice 3: Tile -->
-      <!-- <label>
-            <input type="radio" name="inputType" value="tile">
-            Tile (x, y, z)
-        </label>
-        <div>
-            <input type="number" id="tileX" placeholder="x" disabled>
-            <input type="number" id="tileY" placeholder="y" disabled>
-            <input type="number" id="tileZ" placeholder="z" disabled>
-        </div> -->
-
-      <strong>Select max zoom:</strong><br />
-      <label for="maxZoom">Max Zoom</label>
-      <select id="maxZoom" name="maxZoom" required>
-        <option value="4">4</option>
-        <option value="5">5</option>
-        <option value="6">6</option>
-        <option value="7">7</option>
-        <option value="8">8</option>
-        <option value="9">9</option>
-        <option value="10">10</option>
-        <option value="11">11</option>
-        <option value="12">12</option>
-        <option value="13">13</option>
-        <option value="14">14</option>
-        <option value="15" selected="selected">15</option>
-        <option value="16">16</option>
-        <option value="17">17</option>
-        <option value="18">18</option>
-        <option value="19">19</option>
-        <option value="20">20</option>
-      </select>
-
-      <br />
-      <button id="createJobButton">Create Seeding Job</button>
-    </fieldset>
-
-    <div id="output">
-      <table id="activeJobsTable" aria-live="polite">
-        <thead>
-          <tr>
-            <th>#</th>
-            <th>Chart</th>
-            <th>Region</th>
-            <th>Total tiles</th>
-            <th>Downloaded</th>
-            <th>Cached</th>
-            <th>Failed</th>
-            <th>Progress</th>
-            <th>Status</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td colspan="7" class="muted">Loading progress…</td>
-          </tr>
-        </tbody>
-      </table>
     </div>
 
-    <script src="index.js"></script>
+    <div id="regionModal" class="modal hidden">
+      <div class="modal-content" style="max-width: fit-content">
+        <div class="modal-header">
+          <h3>Edit Region Job</h3>
+          <button id="cancelRegion" onclick="closeRegionModal()">✖</button>
+        </div>
+        <fieldset>
+          <legend>Region Information</legend>
+          <label for="regionName"><strong>Region Name:</strong></label>
+          <input type="text" id="regionName" />
+          <button id="saveRegion" class="btn btn--primary">Save</button>
+        </fieldset>
+
+        <!-- <h3>Seed charts to prefetch tiles for offline usage.</h3> -->
+        <fieldset>
+          <legend>Seed charts to prefetch tiles for offline usage.</legend>
+          <label for="chartSelect"
+            ><strong>Select chart provider:</strong></label
+          >
+          <select id="chartSelect" name="chartSelect" required></select>
+
+          <label for="minZoom"><strong>Min Zoom:</strong></label>
+          <input type="number" id="minZoom" min="0" max="22" value="1" />
+
+          <label for="maxZoom"><strong>Max Zoom:</strong></label>
+          <input type="number" id="maxZoom" min="0" max="22" value="15" />
+
+          <strong>Options:</strong><br />
+          <input type="checkbox" id="refetch" name="refetch" value="refetch" />
+          <label for="refetch"> Refresh all tiles</label><br />
+          <input type="checkbox" id="mbtiles" name="mbtiles" value="mbtiles" />
+          <label for="mbtiles"> Create a separate mbtiles for this region</label
+          ><br />
+          <input type="checkbox" id="vacuum" name="vacuum" value="vacuum" />
+          <label for="vacuum"> Compact file after seeding</label><br />
+          <!-- <div class="modal-actions"> -->
+          <!-- <button id="cancelButton" type="button">Cancel</button> -->
+          <button
+            id="createJobButton"
+            class="btn btn--primary"
+            onclick="createJob('start')"
+          >
+            Create Seeding Job
+          </button>
+          <button
+            id="deleteButton"
+            class="btn btn--danger"
+            type="button"
+            onclick="createJob('delete')"
+          >
+            Delete Cached Tiles for this region
+          </button>
+          <!-- </div> -->
+        </fieldset>
+        <span id="response" class="hidden"
+          >New seeding job added, Click jobs to view details</span
+        >
+      </div>
+    </div>
+
+    <div id="help" class="modal">
+      <div class="modal-content" style="max-width: fit-content">
+        <div class="modal-header">
+          <h1 id="using-the-chart-plugin">Using the Chart Plugin</h1>
+          <button id="closeHelpModal" onclick="toggleHelpModal()">✖</button>
+        </div>
+
+        <h2 id="overview">Overview</h2>
+        <p>
+          The graphical interface provides several tools for navigating the
+          chart, defining cache regions, and managing chart data. The buttons
+          highlighted in the interface correspond to the main controls available
+          to the user.
+        </p>
+        <p><img src="images/overview.png" alt="Main UI" /></p>
+        <h3 id="zoom-controls">Zoom Controls</h3>
+        <p>
+          The <strong>Zoom In (+)</strong> and
+          <strong>Zoom Out (−)</strong> buttons allow the user to change the map
+          scale.
+        </p>
+        <ul>
+          <li>
+            <p>
+              <strong>Zoom In (+)</strong><br />Increases the zoom level to
+              display more detailed chart information.
+            </p>
+          </li>
+          <li>
+            <p>
+              <strong>Zoom Out (−)</strong><br />Decreases the zoom level to
+              show a larger geographic area.
+            </p>
+          </li>
+        </ul>
+        <p>
+          These controls behave similarly to standard map applications. Zooming
+          can also be performed using the mouse scroll wheel.
+        </p>
+        <h3 id="region-creation-tools">Region Creation Tools</h3>
+        <p>
+          The region creation tools allow the user to define areas of the map
+          for chart caching.
+        </p>
+        <ul>
+          <li>
+            <p>
+              <strong>Create Rectangular Region</strong><br />Enables the user
+              to draw a rectangular area on the chart. This region defines the
+              boundaries where chart data should be cached.
+            </p>
+          </li>
+          <li>
+            <p>
+              <strong>Create Polygon Region</strong><br />Allows the user to
+              draw a custom polygon by placing multiple points on the map. This
+              is useful when the area of interest does not fit a simple
+              rectangle.
+            </p>
+          </li>
+        </ul>
+        <p>
+          These regions determine which chart tiles or map data will be included
+          in the cache.
+        </p>
+        <h3 id="region-editing-tools">Region Editing Tools</h3>
+        <p>
+          Once regions are created, they can be modified using the editing
+          tools.
+        </p>
+        <ul>
+          <li>
+            <p>
+              <strong>Edit Region</strong><br />Allows the user to modify an
+              existing region by adjusting its shape or vertices.
+            </p>
+          </li>
+          <li>
+            <p>
+              <strong>Delete Region</strong><br />Removes the selected region
+              from the map.
+            </p>
+          </li>
+        </ul>
+        <h3 id="active-seeding-jobs">Active Seeding Jobs</h3>
+        <p>
+          The <strong>Active Seeding Jobs</strong> button displays currently
+          running caching or seeding processes.
+        </p>
+        <p>
+          From this panel, users can monitor the progress of jobs that are
+          downloading or preparing chart data for offline use.
+        </p>
+        <h3 id="chart-layers">Chart Layers</h3>
+        <p>
+          The <strong>Chart Layers</strong> button opens a layer selection menu.
+        </p>
+        <p>
+          Users can enable or disable different chart layers to control what
+          information is visible on the map. Only chart layers that support
+          proxy will be visible in this menu.
+        </p>
+        <h3 id="help">Help</h3>
+        <p>
+          The <strong>Help</strong> button opens the help overlay shown in the
+          interface.
+        </p>
+        <p>
+          This overlay provides a quick visual guide explaining the available
+          controls and their functions.
+        </p>
+        <h2 id="region-job-configuration">Region Job Configuration</h2>
+        <p>
+          The <strong>Edit Region Job</strong> dialog allows users to configure
+          caching (seeding) settings for a selected region. Seeding downloads
+          chart tiles for the defined region so they are available locally for
+          offline use.
+        </p>
+        <p><img src="images/region.png" alt="Region" /></p>
+        <h3 id="region-information">Region Information</h3>
+        <p>
+          <code>Region Name</code> field defines the name of the selected
+          region. This name is used to identify the region in the interface and
+          in the list of configured jobs.
+        </p>
+        <p>
+          <code>Save:</code> button stores any changes made to the region name.
+        </p>
+        <h3 id="chart-seeding-configuration">Chart Seeding Configuration</h3>
+        <p>
+          This section configures how chart tiles will be downloaded and stored
+          for the selected region.
+        </p>
+        <p>
+          <code>Select Chart Provider:</code> dropdown allows the user to choose
+          which chart source should be used when downloading tiles. Different
+          providers may supply different chart styles or datasets depending on
+          the configured system.
+        </p>
+        <p>
+          <code>Minimum Zoom:</code> value defines the lowest zoom level that
+          will be downloaded. Lower zoom levels cover larger geographic areas
+          with fewer tiles and are useful for viewing charts while zoomed far
+          out.
+        </p>
+        <p>
+          <code>Maximum Zoom:</code> value defines the highest zoom level that
+          will be downloaded. Higher zoom levels contain more detailed chart
+          data but require significantly more tiles and storage space.
+        </p>
+        <h4 id="options">Options</h4>
+        <p>
+          <code>Refresh All Tiles</code> If enabled, the seeding process will
+          re-download tiles even if they already exist in the cache. This is
+          useful when charts have been updated and the local cache needs to be
+          refreshed.
+        </p>
+        <p>
+          <code>Create a Separate MBTiles for This Region:</code> When enabled,
+          all tiles downloaded for this region will be copied to a dedicated
+          MBTiles database file. First the tiles will be downloaded to the
+          global cache, once the download is complete a new mbtiles file will be
+          created to include the downloaded tiles.
+        </p>
+        <p>This can be useful for:</p>
+        <ul>
+          <li>Sharing maps with outher sailors</li>
+          <li>
+            Creating offline maps to be used by other chart plotter software,
+            e.g. OpenCPN
+          </li>
+        </ul>
+        <p>
+          <code>Compact File After Seeding</code> If this option is enabled, the
+          MBTiles database will be compacted after the seeding process finishes.
+          Compaction reduces file size and improves storage efficiency by
+          cleaning up unused database space created during the tile download
+          process.
+        </p>
+        <p>
+          ⚠️ <strong>Warning:</strong> This will temporarily create a new
+          mbtiles file and copy the tiles to the new database. You must have
+          enough diskspace to perform this operation.
+        </p>
+        <h4 id="actions">Actions</h4>
+        <p>
+          <code>Create Seeding Job</code> button starts a caching job for the
+          selected region using the configured settings. The job will download
+          all tiles required for the region between the selected minimum and
+          maximum zoom levels. Progress and status information can be monitored
+          in the Job Progress panel.
+        </p>
+        <p>
+          <code>Delete Cached Tiles for This Region:</code> button removes all
+          cached tiles associated with the selected region. This operation frees
+          storage space from the mbtiles but not necesarily the diskspace.
+        </p>
+        <p>
+          ⚠️ <strong>Warning:</strong> This action permanently deletes the
+          cached data for the region.
+        </p>
+        <p>
+          ⚠️ <strong>Warning:</strong> Eventhough the tiles are removed from the
+          cache, the database size on disk will not shrink due to how sqlite
+          database are managed. Use compact file after seeding option to free
+          the diskspace.
+        </p>
+        <h2 id="job-progress">Job Progress</h2>
+        <p>
+          The Job Progress dialog displays the status of active chart seeding
+          jobs.<br />Each job represents a task that downloads chart tiles for a
+          defined region so they are available for offline use. Jobs are
+          ephemeral: If the signalk server is restarted these jobs will also be
+          removed, but the cached tiles will remain in the cache.
+        </p>
+        <p><img src="images/jobs.png" alt="Region" /></p>
+        <hr />
+        <h3 id="job-information">Job Information</h3>
+        <p>Each job card provides a summary of the seeding operation.</p>
+        <p>
+          <code>Region:</code> field shows the name of the region associated
+          with the job.<br />This corresponds to the region defined during the
+          region creation or editing process. The line below the region name
+          indicates the chart provider being used to download tiles.
+        </p>
+        <p>
+          <code>Job Status:</code> indicates the current activity of the job.
+          Possible statuses are: <strong>Seeding</strong> – Tiles are currently
+          being downloaded. and - <strong>Completed</strong> – The job has
+          finished successfully.
+        </p>
+        <p>
+          <code>Progress Bar:</code> visually represents how much of the job has
+          been completed. The percentage shown next to the bar indicates the
+          proportion of tiles processed relative to the total number of tiles
+          required for the region and zoom levels.
+        </p>
+        <p>
+          Each job displays several counters that provide detailed information
+          about the seeding process.
+        </p>
+        <p>
+          <code>Total:</code> Indicates an estimate of the total number of tiles
+          that must be processed for the job with up to %10 error depending on
+          the size and shape of the region.
+        </p>
+        <p>
+          <code>Downloaded:</code> Represents the number of tiles successfully
+          retrieved from the chart provider during the current seeding process.
+        </p>
+        <p>
+          <code>Cached:</code> Indicates the number of tiles that were already
+          present in the cache and did not need to be downloaded again. This can
+          occur when seeding overlaps with previously cached data.
+        </p>
+        <p>
+          <code>Failed:</code> Represents the number of tiles that could not be
+          downloaded due to network errors, provider issues, or other failures.
+        </p>
+        <h3 id="job-controls">Job Controls</h3>
+        <p>
+          <code>Cancel Job:</code> Each job card contains a
+          <strong>Cancel (×)</strong> button in the upper corner. Pressing this
+          button stops the seeding process for that job. Any tiles that were
+          already downloaded will remain in the cache.
+        </p>
+      </div>
+    </div>
+
+    <script src="js/index.js"></script>
   </body>
 </html>

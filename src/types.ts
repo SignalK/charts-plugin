@@ -1,4 +1,5 @@
 import type { OutgoingHttpHeaders } from 'http'
+import type { DatabaseSync } from 'node:sqlite'
 
 type MapSourceType =
   | 'tilelayer'
@@ -26,6 +27,9 @@ export interface MBTilesHandle {
     callback: (err: Error | null, metadata: MBTilesMetadata) => void
   ) => void
   close: (callback: (err: Error | null) => void) => void
+  // Internal node:sqlite database handle exposed by @signalk/mbtiles for
+  // advanced operations (tile cache writes, vacuum, bulk delete).
+  _db?: DatabaseSync
 }
 
 // MBTiles metadata rows relevant to the plugin. `bounds` is commonly a
