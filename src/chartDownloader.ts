@@ -17,6 +17,7 @@ import checkDiskSpace from 'check-disk-space'
 import { ResourcesApi } from '@signalk/server-api'
 import { ChartProvider } from './types'
 import { lonLatToMercator, lonLatToTile, tileToBBox } from './projection'
+import { MIN_ZOOM } from './tileServer'
 
 export interface Tile {
   x: number
@@ -140,9 +141,10 @@ export class ChartDownloader {
     this.areaDescription = `Tile: [${tile.x}, ${tile.y}, ${tile.z}]`
   }
 
+  private static DISK_CHECK_INTERVAL_MS = 30_000
+
   /**
    * Download map tiles for a specific area.
-   *
    */
   async seedCache(): Promise<void> {
     // Guard against double-start: a second call while Running would share
@@ -156,13 +158,17 @@ export class ChartDownloader {
     this.failedTiles = 0
     this.cachedTiles = this.totalTiles - this.tilesToDownload.length
     const limit = pLimit(this.concurrentDownloadsLimit) // concurrent download limit
-    let tileCounter = 0
+    let lastDiskCheck = 0
 
     const tasks = this.tilesToDownload.map((tile) =>
       limit(async () => {
         if (this.cancelRequested) return
-        if (tileCounter % 1000 === 0) {
-          await new Promise((r) => setTimeout(r, 0))
+        // Time-based (rather than tile-count-based) disk-space probing: a
+        // tight per-1000-tile cadence fired hundreds of times on a large
+        // bbox, whereas real disk consumption grows with wall-clock time.
+        const now = Date.now()
+        if (now - lastDiskCheck >= ChartDownloader.DISK_CHECK_INTERVAL_MS) {
+          lastDiskCheck = now
           try {
             const { free } = await checkDiskSpace(this.chartsPath)
             if (free < ChartDownloader.MINIMUM_FREE_DISK_SPACE) {
@@ -176,7 +182,6 @@ export class ChartDownloader {
             return
           }
         }
-        tileCounter++
         const buffer = await ChartDownloader.getTileFromCacheOrRemote(
           this.chartsPath,
           this.provider,
@@ -194,10 +199,14 @@ export class ChartDownloader {
       })
     )
 
-    try {
-      await Promise.all(tasks)
-    } catch (err) {
-      console.error('Error downloading tiles:', err)
+    // allSettled ensures every in-flight task completes before we flip back
+    // to Stopped; Promise.all would resolve on the first rejection while
+    // other tasks still incremented counters in the background.
+    const results = await Promise.allSettled(tasks)
+    for (const r of results) {
+      if (r.status === 'rejected') {
+        console.error('Error downloading tile:', r.reason)
+      }
     }
     this.status = Status.Stopped
   }
@@ -316,8 +325,10 @@ export class ChartDownloader {
     tile: Tile,
     timeoutMs = 5000
   ): Promise<Buffer | null> {
+    // Local (non-proxy) providers have no remoteUrl; the POST /cache endpoint
+    // is open to any provider, so callers can still land here and should get
+    // a well-defined null rather than a crash.
     if (!provider.remoteUrl) {
-      console.error(`No remote URL defined for provider ${provider.name}`)
       return null
     }
     let url = provider.remoteUrl
@@ -349,22 +360,24 @@ export class ChartDownloader {
       }
     }
     const controller = new AbortController()
-    const id = setTimeout(() => controller.abort(), timeoutMs)
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
     try {
       const response = await fetch(url, {
         headers: provider.headers,
         signal: controller.signal
       })
+      // Clear the abort timer as soon as the response head is in. A long body
+      // read was otherwise racing the timeout and could be aborted mid-stream
+      // while the caller waited on arrayBuffer().
+      clearTimeout(timeoutId)
       if (!response.ok) {
         return null
       }
       const arrayBuffer = await response.arrayBuffer()
-      const buffer = Buffer.from(arrayBuffer)
-      return buffer
-    } catch (err) {
+      return Buffer.from(arrayBuffer)
+    } catch (_err) {
+      clearTimeout(timeoutId)
       return null
-    } finally {
-      clearTimeout(id)
     }
   }
 
@@ -399,7 +412,7 @@ export class ChartDownloader {
     const crossesAntiMeridian = minLon > maxLon
     // Respect the provider's minzoom: low zooms outside the provider's range
     // would 404 from the remote and just inflate totalTiles.
-    const minZoom = Math.max(1, this.provider.minzoom ?? 1)
+    const minZoom = Math.max(MIN_ZOOM, this.provider.minzoom ?? MIN_ZOOM)
 
     // Helper to process a lon/lat box normally. lonLatToTileXY returns
     // tile-Y increasing southward, so for a box with minLat < maxLat the

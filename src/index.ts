@@ -3,10 +3,19 @@ import fs, { FSWatcher } from 'fs'
 import * as _ from 'lodash'
 import { findCharts } from './charts'
 import { apiRoutePrefix } from './constants'
-import { ChartProvider, OnlineChartProvider } from './types'
-import { ChartSeedingManager, ChartDownloader, Tile } from './chartDownloader'
+import { ChartProvider, MBTilesHandle, OnlineChartProvider } from './types'
+import { ChartSeedingManager, Tile } from './chartDownloader'
+import {
+  MAX_ZOOM,
+  MIN_ZOOM,
+  serveTileFromCacheOrRemote,
+  serveTileFromFilesystem,
+  serveTileFromMbtiles,
+  validateBBox,
+  validateMaxZoom,
+  validateTileCoords
+} from './tileServer'
 import { Request, Response, Application } from 'express'
-import { OutgoingHttpHeaders } from 'http'
 import {
   Plugin,
   ServerAPI,
@@ -29,8 +38,6 @@ interface ChartProviderApp
   }
 }
 
-const MIN_ZOOM = 1
-const MAX_ZOOM = 24
 const chartTilesPath = '/signalk/chart-tiles'
 // Debounce window used to collapse FSWatcher bursts during rename / atomic-save
 // sequences into one reload. Overridable via env var so tests don't have to
@@ -391,11 +398,10 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
     }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const closeMbtilesHandle = (handle: any) => {
+  const closeMbtilesHandle = (handle: MBTilesHandle) => {
     if (typeof handle?.close !== 'function') return
     try {
-      handle.close((err: Error | null) => {
+      handle.close((err) => {
         if (err) app.debug(`MBTiles close error: ${err.message}`)
       })
     } catch (err) {
@@ -478,15 +484,26 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
         if (!identifier || !z || !x || !y) {
           return res.sendStatus(404)
         }
+        const iz = parseInt(z)
         const ix = parseInt(x)
         const iy = parseInt(y)
-        const iz = parseInt(z)
+        const coordError = validateTileCoords(iz, ix, iy)
+        if (coordError) {
+          return res.status(400).send(coordError)
+        }
         const provider = chartProviders[identifier]
         if (!provider) {
           return res.sendStatus(404)
         }
         if (provider.proxy === true) {
-          return serveTileFromCacheOrRemote(res, provider, iz, ix, iy)
+          return serveTileFromCacheOrRemote(
+            res,
+            cachePath,
+            provider,
+            iz,
+            ix,
+            iy
+          )
         } else {
           switch (provider._fileFormat) {
             case 'directory':
@@ -494,7 +511,7 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
             case 'mbtiles':
               return serveTileFromMbtiles(res, provider, iz, ix, iy)
             default:
-              console.log(
+              app.debug(
                 `Unknown chart provider fileformat ${provider._fileFormat}`
               )
               res.status(500).send()
@@ -534,6 +551,22 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
             .send('Request must include regionGUID, bbox, or tile')
         }
         const maxZoomParsed = parseInt(maxZoom)
+        const zoomError = validateMaxZoom(maxZoomParsed)
+        if (zoomError) {
+          return res.status(400).send(zoomError)
+        }
+        if (bbox) {
+          const bboxError = validateBBox(bbox)
+          if (bboxError) {
+            return res.status(400).send(bboxError)
+          }
+        }
+        if (tile) {
+          const tileError = validateTileCoords(tile.z, tile.x, tile.y)
+          if (tileError) {
+            return res.status(400).send(tileError)
+          }
+        }
         try {
           const job = await ChartSeedingManager.createJob(
             app.resourcesApi,
@@ -573,9 +606,6 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
           return res.sendStatus(404)
         }
         const { action } = req.body as { action: string }
-        if (!id) {
-          return res.status(400).send('Missing job id')
-        }
         const parsedId = parseInt(id)
         if (!Number.isFinite(parsedId)) {
           return res.status(400).send(`Invalid job id: ${id}`)
@@ -665,44 +695,10 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
     }
   }
 
-  const serveTileFromCacheOrRemote = async (
-    res: Response,
-    provider: ChartProvider,
-    z: number,
-    x: number,
-    y: number
-  ) => {
-    const buffer = await ChartDownloader.getTileFromCacheOrRemote(
-      cachePath,
-      provider,
-      { x, y, z }
-    )
-    if (!buffer) {
-      res.sendStatus(502)
-      return
-    }
-    res.set('Content-Type', `image/${provider.format}`)
-    res.send(buffer)
-  }
-
   return plugin
 }
 
 export = createPlugin
-
-const responseHttpOptions = {
-  headers: {
-    'Cache-Control': 'public, max-age=7776000' // 90 days
-  }
-}
-
-// Allowed tile file formats. Add new formats here when supporting them.
-const ALLOWED_TILE_FORMATS = new Set(['png', 'jpg', 'jpeg', 'pbf'])
-
-const isAllowedTileFormat = (format: string | undefined): boolean => {
-  if (!format) return false
-  return ALLOWED_TILE_FORMATS.has(format.toLowerCase())
-}
 
 const resolveUniqueChartPaths = (
   chartPaths: string[],
@@ -741,8 +737,8 @@ const convertOnlineProviderConfig = (provider: OnlineChartProvider) => {
     name: provider.name,
     description: provider.description,
     bounds: [-180, -90, 180, 90],
-    minzoom: Math.min(Math.max(1, provider.minzoom), 24),
-    maxzoom: Math.min(Math.max(1, provider.maxzoom), 24),
+    minzoom: Math.min(Math.max(MIN_ZOOM, provider.minzoom), MAX_ZOOM),
+    maxzoom: Math.min(Math.max(MIN_ZOOM, provider.maxzoom), MAX_ZOOM),
     format: provider.format,
     scale: 250000,
     type: provider.serverType ? provider.serverType : 'tilelayer',
@@ -798,77 +794,4 @@ const ensureDirectoryExists = async (p: string) => {
   // mkdir with recursive:true is idempotent and skips the existsSync probe,
   // keeping startup off the sync-fs path.
   await fs.promises.mkdir(p, { recursive: true })
-}
-
-const serveTileFromFilesystem = async (
-  res: Response,
-  provider: ChartProvider,
-  z: number,
-  x: number,
-  y: number
-) => {
-  const { format, _flipY, _filePath } = provider
-  const normalizedFormat = format?.toLowerCase() ?? ''
-  if (!_filePath || !ALLOWED_TILE_FORMATS.has(normalizedFormat)) {
-    res.sendStatus(404)
-    return
-  }
-  const flippedY = Math.pow(2, z) - 1 - y
-  const file = path.resolve(
-    _filePath,
-    `${z}/${x}/${_flipY ? flippedY : y}.${normalizedFormat}`
-  )
-  try {
-    const stats = await fs.promises.stat(file)
-    if (!stats.isFile()) {
-      res.sendStatus(404)
-      return
-    }
-    await fs.promises.access(file, fs.constants.R_OK)
-  } catch {
-    res.sendStatus(404)
-    return
-  }
-  res.sendFile(file, responseHttpOptions)
-}
-
-const serveTileFromMbtiles = (
-  res: Response,
-  provider: ChartProvider,
-  z: number,
-  x: number,
-  y: number
-) => {
-  if (!isAllowedTileFormat(provider.format)) {
-    res.sendStatus(404)
-    return
-  }
-  // Guard against a provider whose MBTiles handle is missing: openMbtilesFile
-  // may have failed post-reconcile, or the handle was closed while a request
-  // was in flight. Without this check, `.getTile` throws synchronously and
-  // Express never answers the client.
-  if (!provider._mbtilesHandle) {
-    res.sendStatus(500)
-    return
-  }
-  provider._mbtilesHandle.getTile(
-    z,
-    x,
-    y,
-    (err: Error, tile: Buffer, headers: OutgoingHttpHeaders) => {
-      if (err && err.message && err.message === 'Tile does not exist') {
-        res.sendStatus(404)
-      } else if (err) {
-        console.error(
-          `Error fetching tile ${provider.identifier}/${z}/${x}/${y}:`,
-          err
-        )
-        res.sendStatus(500)
-      } else {
-        headers['Cache-Control'] = responseHttpOptions.headers['Cache-Control']
-        res.writeHead(200, headers)
-        res.end(tile)
-      }
-    }
-  )
 }

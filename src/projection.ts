@@ -9,8 +9,22 @@ export const WEB_MERCATOR_HALF_EXTENT_M = 20037508.34
 // limit used by OSM / Google / MapBox tile schemes.
 export const WEB_MERCATOR_MAX_LAT = 85.0511287798
 
+// Web Mercator tile → WGS84 bounding box.
+// Input  (x=1, y=1, z=2): tile (1,1) at zoom 2 — one of sixteen.
+// Output: [minLon, minLat, maxLon, maxLat] for that tile in degrees.
+// x and y must be inside the grid ([0, 2^z)); out-of-range inputs produced
+// nonsense coordinates that silently fed downstream bbox math. Fail fast.
 export function tileToBBox(x: number, y: number, z: number): BBox {
+  if (!Number.isInteger(z) || z < 0) {
+    throw new RangeError(`tileToBBox: invalid zoom ${z}`)
+  }
   const n = 2 ** z
+  if (!Number.isInteger(x) || x < 0 || x >= n) {
+    throw new RangeError(`tileToBBox: x=${x} out of range at z=${z}`)
+  }
+  if (!Number.isInteger(y) || y < 0 || y >= n) {
+    throw new RangeError(`tileToBBox: y=${y} out of range at z=${z}`)
+  }
   const lon1 = (x / n) * 360 - 180
   const lat1 =
     (Math.atan(Math.sinh(Math.PI * (1 - (2 * y) / n))) * 180) / Math.PI

@@ -1,193 +1,231 @@
-;(function () {})()
-
-document.addEventListener('DOMContentLoaded', async () => {
-  const regionSelect = document.getElementById('region')
-  const bboxInputs = document.querySelectorAll(
-    '#bboxMinLon, #bboxMinLat, #bboxMaxLon, #bboxMaxLat'
-  )
-  const tileInputs = document.querySelectorAll('#tileX, #tileY, #tileZ')
-
-  function updateInputs() {
-    const type = document.querySelector('input[name="inputType"]:checked').value
-
-    regionSelect.disabled = type !== 'region'
-    bboxInputs.forEach((i) => (i.disabled = type !== 'bbox'))
-    tileInputs.forEach((i) => (i.disabled = type !== 'tile'))
-  }
-
-  // Attach listeners
-  document.querySelectorAll('input[name="inputType"]').forEach((r) => {
-    r.addEventListener('change', updateInputs)
-  })
-
-  updateInputs() // initial load
-
-  if (!regionSelect) return
-
-  try {
-    const resp = await fetch('/signalk/v2/api/resources/regions')
-    if (!resp.ok) throw new Error(`Failed to fetch regions: ${resp.status}`)
-    const data = await resp.json()
-    // clear existing options
-    regionSelect.innerHTML = ''
-
-    const entries = Object.entries(data || {})
-    entries
-      .sort(([, a], [, b]) => {
-        const na = a && a.name ? String(a.name) : ''
-        const nb = b && b.name ? String(b.name) : ''
-        return na.localeCompare(nb)
-      })
-      .forEach(([id, info]) => {
-        const opt = document.createElement('option')
-        opt.value = id
-        opt.textContent = info && info.name ? info.name : id
-        regionSelect.appendChild(opt)
-      })
-
-    // if no regions returned, add a fallback option
-    if (!regionSelect.options.length) {
-      const opt = document.createElement('option')
-      opt.value = ''
-      opt.textContent = '-- No regions available --'
-      regionSelect.appendChild(opt)
+// POSTs a seed-job request and returns the parsed job info. Extracted so the
+// fetch + response-validation logic can be unit-tested in node without jsdom.
+// The browser still calls this from the click handler below.
+async function submitSeedJob(chart, body, fetchImpl) {
+  const fetchFn = fetchImpl || globalThis.fetch
+  const resp = await fetchFn(
+    `/signalk/chart-tiles/cache/${encodeURIComponent(chart)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
     }
-  } catch (err) {
-    console.error('Error loading regions:', err)
+  )
+  if (!resp.ok) {
+    let text = ''
+    try {
+      text = await resp.text()
+    } catch (_readErr) {
+      // Ignore read errors when composing the error message; the status code
+      // and our surrounding context are enough to diagnose.
+    }
+    throw new Error(
+      `Failed to seed charts: ${resp.status}${text ? ` - ${text}` : ''}`
+    )
   }
+  const data = await resp.json()
+  if (!data || typeof data.id !== 'number') {
+    throw new Error('Job response is missing a numeric id')
+  }
+  return data
+}
 
-  //Fetch available maps and populate the chart select box
-  const chartSelect = document.getElementById('chart')
-  if (!chartSelect) return
+// Node-only export for the unit test. The browser script tag ignores this
+// branch because `module` is undefined in a plain <script>.
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { submitSeedJob }
+}
 
-  try {
-    const resp = await fetch('/signalk/v2/api/resources/charts')
-    if (!resp.ok) throw new Error(`Failed to fetch charts: ${resp.status}`)
-    const data = await resp.json()
-    // clear existing options
-    chartSelect.innerHTML = ''
+// The browser attaches the DOM handlers; node (test context) skips them.
+if (typeof document !== 'undefined') registerDomHandlers()
 
-    const entries = Object.entries(data || {})
-    entries
-      .sort(([, a], [, b]) => {
-        const na = a && a.name ? String(a.name) : ''
-        const nb = b && b.name ? String(b.name) : ''
-        return na.localeCompare(nb)
-      })
-      .forEach(([id, info]) => {
-        if (info.proxy === true) {
+function registerDomHandlers() {
+  document.addEventListener('DOMContentLoaded', async () => {
+    const regionSelect = document.getElementById('region')
+    const bboxInputs = document.querySelectorAll(
+      '#bboxMinLon, #bboxMinLat, #bboxMaxLon, #bboxMaxLat'
+    )
+    const tileInputs = document.querySelectorAll('#tileX, #tileY, #tileZ')
+
+    function updateInputs() {
+      const type = document.querySelector(
+        'input[name="inputType"]:checked'
+      ).value
+
+      regionSelect.disabled = type !== 'region'
+      bboxInputs.forEach((i) => (i.disabled = type !== 'bbox'))
+      tileInputs.forEach((i) => (i.disabled = type !== 'tile'))
+    }
+
+    // Attach listeners
+    document.querySelectorAll('input[name="inputType"]').forEach((r) => {
+      r.addEventListener('change', updateInputs)
+    })
+
+    updateInputs() // initial load
+
+    if (!regionSelect) return
+
+    try {
+      const resp = await fetch('/signalk/v2/api/resources/regions')
+      if (!resp.ok) throw new Error(`Failed to fetch regions: ${resp.status}`)
+      const data = await resp.json()
+      // clear existing options
+      regionSelect.innerHTML = ''
+
+      const entries = Object.entries(data || {})
+      entries
+        .sort(([, a], [, b]) => {
+          const na = a && a.name ? String(a.name) : ''
+          const nb = b && b.name ? String(b.name) : ''
+          return na.localeCompare(nb)
+        })
+        .forEach(([id, info]) => {
           const opt = document.createElement('option')
           opt.value = id
           opt.textContent = info && info.name ? info.name : id
-          chartSelect.appendChild(opt)
+          regionSelect.appendChild(opt)
+        })
+
+      // if no regions returned, add a fallback option
+      if (!regionSelect.options.length) {
+        const opt = document.createElement('option')
+        opt.value = ''
+        opt.textContent = '-- No regions available --'
+        regionSelect.appendChild(opt)
+      }
+    } catch (err) {
+      console.error('Error loading regions:', err)
+    }
+
+    //Fetch available maps and populate the chart select box
+    const chartSelect = document.getElementById('chart')
+    if (!chartSelect) return
+
+    try {
+      const resp = await fetch('/signalk/v2/api/resources/charts')
+      if (!resp.ok) throw new Error(`Failed to fetch charts: ${resp.status}`)
+      const data = await resp.json()
+      // clear existing options
+      chartSelect.innerHTML = ''
+
+      const entries = Object.entries(data || {})
+      entries
+        .sort(([, a], [, b]) => {
+          const na = a && a.name ? String(a.name) : ''
+          const nb = b && b.name ? String(b.name) : ''
+          return na.localeCompare(nb)
+        })
+        .forEach(([id, info]) => {
+          if (info.proxy === true) {
+            const opt = document.createElement('option')
+            opt.value = id
+            opt.textContent = info && info.name ? info.name : id
+            chartSelect.appendChild(opt)
+          }
+        })
+
+      // if no maps returned, add a fallback option
+      if (!chartSelect.options.length) {
+        const opt = document.createElement('option')
+        opt.value = ''
+        opt.textContent = '-- No maps available --'
+        chartSelect.appendChild(opt)
+      }
+    } catch (err) {
+      console.error('Error loading maps:', err)
+    }
+
+    document
+      .getElementById('createJobButton')
+      .addEventListener('click', async () => {
+        try {
+          const chart = document.getElementById('chart').value
+          const regionGUID = document.getElementById('region').value
+          const maxZoom = document.getElementById('maxZoom').value
+          const bbox = {
+            minLon: parseFloat(document.getElementById('bboxMinLon').value),
+            minLat: parseFloat(document.getElementById('bboxMinLat').value),
+            maxLon: parseFloat(document.getElementById('bboxMaxLon').value),
+            maxLat: parseFloat(document.getElementById('bboxMaxLat').value)
+          }
+          // const tile = {
+          //     z: parseInt(document.getElementById('tileZ').value),
+          //     x: parseInt(document.getElementById('tileX').value),
+          //     y: parseInt(document.getElementById('tileY').value),
+
+          // };
+          // console.log(tile);
+          const type = document.querySelector(
+            'input[name="inputType"]:checked'
+          ).value
+          const body = {}
+          if (type === 'region') {
+            body.regionGUID = regionGUID
+          } else if (type === 'bbox') {
+            body.bbox = bbox
+          }
+          // else if (type === 'tile') {
+          //     body.tile = tile;
+          // }
+          body.maxZoom = maxZoom
+          await submitSeedJob(chart, body)
+          // Trigger an immediate refresh so the new job appears without waiting
+          // for the 2s polling interval.
+          fetchActiveJobs()
+        } catch (err) {
+          console.error('Error seeding charts:', err)
+          alert(`Failed to start seeding job: ${err.message}`)
         }
       })
 
-    // if no maps returned, add a fallback option
-    if (!chartSelect.options.length) {
-      const opt = document.createElement('option')
-      opt.value = ''
-      opt.textContent = '-- No maps available --'
-      chartSelect.appendChild(opt)
-    }
-  } catch (err) {
-    console.error('Error loading maps:', err)
-  }
-
-  document
-    .getElementById('createJobButton')
-    .addEventListener('click', async () => {
-      try {
-        const chart = document.getElementById('chart').value
-        const regionGUID = document.getElementById('region').value
-        const maxZoom = document.getElementById('maxZoom').value
-        const bbox = {
-          minLon: parseFloat(document.getElementById('bboxMinLon').value),
-          minLat: parseFloat(document.getElementById('bboxMinLat').value),
-          maxLon: parseFloat(document.getElementById('bboxMaxLon').value),
-          maxLat: parseFloat(document.getElementById('bboxMaxLat').value)
-        }
-        // const tile = {
-        //     z: parseInt(document.getElementById('tileZ').value),
-        //     x: parseInt(document.getElementById('tileX').value),
-        //     y: parseInt(document.getElementById('tileY').value),
-
-        // };
-        // console.log(tile);
-        const type = document.querySelector(
-          'input[name="inputType"]:checked'
-        ).value
-        const body = {}
-        if (type === 'region') {
-          body.regionGUID = regionGUID
-        } else if (type === 'bbox') {
-          body.bbox = bbox
-        }
-        // else if (type === 'tile') {
-        //     body.tile = tile;
-        // }
-        body.maxZoom = maxZoom
-        const resp = await fetch(`/signalk/chart-tiles/cache/${chart}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(body)
-        })
-        if (!resp.ok) throw new Error(`Failed to seed charts: ${resp.status}`)
-        const data = await resp.json()
-      } catch (err) {
-        console.error('Error seeding charts:', err)
+    const fmt = (n) => (typeof n === 'number' ? n.toLocaleString() : '-')
+    const statusText = (s) => {
+      switch (s) {
+        case 0:
+          return 'Stopped'
+        case 1:
+          return 'Running'
+        default:
+          return String(s)
       }
-    })
-
-  const fmt = (n) => (typeof n === 'number' ? n.toLocaleString() : '-')
-  const statusText = (s) => {
-    switch (s) {
-      case 0:
-        return 'Stopped'
-      case 1:
-        return 'Running'
-      default:
-        return String(s)
-    }
-  }
-
-  function renderJobs(items) {
-    const tbody = document.querySelector('#activeJobsTable tbody')
-    if (!tbody) return
-    tbody.innerHTML = ''
-    if (!Array.isArray(items) || items.length === 0) {
-      const tr = document.createElement('tr')
-      tr.innerHTML = '<td colspan="10" class="muted">No active jobs</td>'
-      tbody.appendChild(tr)
-      return
     }
 
-    items.forEach((it, idx) => {
-      const tr = document.createElement('tr')
+    function renderJobs(items) {
+      const tbody = document.querySelector('#activeJobsTable tbody')
+      if (!tbody) return
+      tbody.innerHTML = ''
+      if (!Array.isArray(items) || items.length === 0) {
+        const tr = document.createElement('tr')
+        tr.innerHTML = '<td colspan="10" class="muted">No active jobs</td>'
+        tbody.appendChild(tr)
+        return
+      }
 
-      const pct =
-        typeof it.progress === 'number' && isFinite(it.progress)
-          ? Math.max(0, Math.min(100, it.progress * 100))
-          : 0
-      const pctText = `${pct.toFixed(1)}%`
-      tr.innerHTML = [
-        `<td>${idx + 1}</td>`,
-        `<td>${it.chartName || '-'}</td>`,
-        `<td>${it.regionName || '-'}</td>`,
-        `<td>${fmt(it.totalTiles)}</td>`,
-        `<td>${fmt(it.downloadedTiles)}</td>`,
-        `<td>${fmt(it.cachedTiles)}</td>`,
-        `<td>${fmt(it.failedTiles)}</td>`,
-        `<td>
+      items.forEach((it, idx) => {
+        const tr = document.createElement('tr')
+
+        const pct =
+          typeof it.progress === 'number' && isFinite(it.progress)
+            ? Math.max(0, Math.min(100, it.progress * 100))
+            : 0
+        const pctText = `${pct.toFixed(1)}%`
+        tr.innerHTML = [
+          `<td>${idx + 1}</td>`,
+          `<td>${it.chartName || '-'}</td>`,
+          `<td>${it.regionName || '-'}</td>`,
+          `<td>${fmt(it.totalTiles)}</td>`,
+          `<td>${fmt(it.downloadedTiles)}</td>`,
+          `<td>${fmt(it.cachedTiles)}</td>`,
+          `<td>${fmt(it.failedTiles)}</td>`,
+          `<td>
                          <span class="progress-bar" aria-hidden="true">
                              <span class="progress-fill" style="width:${pct}%"></span>
                          </span>
                          <span class="percent">${pctText}</span>
                      </td>`,
-        `<td>${statusText(it.status)}</td>`,
-        `
+          `<td>${statusText(it.status)}</td>`,
+          `
                 <td class="action-buttons">
                     <button class="btn startstop-btn" data-id="${it.id}" data-totalTiles="${it.totalTiles}" title="Start">
                         <svg class="icon-play ${it.status === 1 ? 'hidden' : ''}" viewBox="0 0 24 24" width="16" height="16" fill="white">
@@ -209,102 +247,103 @@ document.addEventListener('DOMContentLoaded', async () => {
                     </button>
                 </td>
                     `
-      ].join('')
+        ].join('')
 
-      tr.querySelectorAll('.startstop-btn').forEach((button) => {
-        button.addEventListener('click', () => {
-          const playIcon = button.querySelector('.icon-play')
-          const pauseIcon = button.querySelector('.icon-pause')
-          const jobId = button.getAttribute('data-id')
-          const totalTiles = button.getAttribute('data-totalTiles')
-          const isRunning = pauseIcon.classList.contains('hidden')
-          console.log(isRunning)
-          if (isRunning) {
-            // Switch to stop
+        tr.querySelectorAll('.startstop-btn').forEach((button) => {
+          button.addEventListener('click', () => {
+            const playIcon = button.querySelector('.icon-play')
+            const pauseIcon = button.querySelector('.icon-pause')
+            const jobId = button.getAttribute('data-id')
+            const totalTiles = button.getAttribute('data-totalTiles')
+            const isRunning = pauseIcon.classList.contains('hidden')
+            console.log(isRunning)
+            if (isRunning) {
+              // Switch to stop
+              if (
+                totalTiles > 100000 &&
+                !confirm(
+                  `This job has more than ${totalTiles} tiles to download. Starting it may take a long time and put high load on the server. Are you sure you want to start it?`
+                )
+              ) {
+                return
+              }
+              takeAction(jobId, 'start')
+              button.title = 'Stop'
+            } else {
+              // Switch to start
+              takeAction(jobId, 'stop')
+              button.title = 'Start'
+            }
+          })
+        })
+
+        tr.querySelectorAll('.delete-btn').forEach((button) => {
+          button.addEventListener('click', () => {
             if (
-              totalTiles > 100000 &&
-              !confirm(
-                `This job has more than ${totalTiles} tiles to download. Starting it may take a long time and put high load on the server. Are you sure you want to start it?`
+              confirm(
+                'This will delete all cached tiles for this job. Are you sure?'
               )
             ) {
-              return
+              const jobId = button.getAttribute('data-id')
+              if (jobId) {
+                takeAction(jobId, 'delete')
+              }
             }
-            takeAction(jobId, 'start')
-            button.title = 'Stop'
-          } else {
-            // Switch to start
-            takeAction(jobId, 'stop')
-            button.title = 'Start'
-          }
+          })
         })
-      })
 
-      tr.querySelectorAll('.delete-btn').forEach((button) => {
-        button.addEventListener('click', () => {
-          if (
-            confirm(
-              'This will delete all cached tiles for this job. Are you sure?'
-            )
-          ) {
+        tr.querySelectorAll('.remove-btn').forEach((button) => {
+          button.addEventListener('click', () => {
             const jobId = button.getAttribute('data-id')
             if (jobId) {
-              takeAction(jobId, 'delete')
+              takeAction(jobId, 'remove')
             }
-          }
+          })
         })
+
+        tbody.appendChild(tr)
       })
 
-      tr.querySelectorAll('.remove-btn').forEach((button) => {
-        button.addEventListener('click', () => {
-          const jobId = button.getAttribute('data-id')
-          if (jobId) {
-            takeAction(jobId, 'remove')
-          }
+      function takeAction(jobId, action) {
+        fetch(`/signalk/chart-tiles/cache/jobs/${jobId}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            action: action
+          })
         })
-      })
-
-      tbody.appendChild(tr)
-    })
-
-    function takeAction(jobId, action) {
-      fetch(`/signalk/chart-tiles/cache/jobs/${jobId}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          action: action
-        })
-      })
-        .then((response) => {
-          if (!response.ok) {
-            throw new Error(
-              `Failed to ${action} job ${jobId}: ${response.status}`
-            )
-          }
-          fetchActiveJobs()
-        })
-        .catch((error) => {
-          console.error(`Error ${action} job:`, error)
-        })
+          .then((response) => {
+            if (!response.ok) {
+              throw new Error(
+                `Failed to ${action} job ${jobId}: ${response.status}`
+              )
+            }
+            fetchActiveJobs()
+          })
+          .catch((error) => {
+            console.error(`Error ${action} job:`, error)
+          })
+      }
     }
-  }
 
-  async function fetchActiveJobs() {
-    const tbody = document.querySelector('#activeJobsTable tbody')
-    try {
-      const resp = await fetch('/signalk/chart-tiles/cache/jobs')
-      if (!resp.ok) throw new Error('HTTP ' + resp.status)
-      const data = await resp.json()
-      renderJobs(data)
-    } catch (err) {
-      console.error('Error fetching active jobs:', err)
-      tbody.innerHTML =
-        '<tr><td colspan="10" class="muted">Error loading active jobs</td></tr>'
+    async function fetchActiveJobs() {
+      const tbody = document.querySelector('#activeJobsTable tbody')
+      try {
+        const resp = await fetch('/signalk/chart-tiles/cache/jobs')
+        if (!resp.ok) throw new Error('HTTP ' + resp.status)
+        const data = await resp.json()
+        renderJobs(data)
+      } catch (err) {
+        console.error('Error fetching active jobs:', err)
+        tbody.innerHTML =
+          '<tr><td colspan="10" class="muted">Error loading active jobs</td></tr>'
+      }
     }
-  }
 
-  fetchActiveJobs()
-  // refresh every 2 seconds
-  setInterval(fetchActiveJobs, 2000)
-})
+    fetchActiveJobs()
+    // refresh every 2 seconds
+    setInterval(fetchActiveJobs, 2000)
+  })
+}
