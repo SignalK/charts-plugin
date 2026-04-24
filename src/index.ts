@@ -836,7 +836,7 @@ const convertOnlineProviderConfig = (provider: OnlineChartProvider) => {
       layers: provider.layers ? provider.layers : null
     },
     proxy: provider.proxy ? provider.proxy : false,
-    onlySea: provider.onlySea ? provider.onlySea : true,
+    onlySea: provider.onlySea ? provider.onlySea : false,
     onlyLand: provider.onlyLand ? provider.onlyLand : false,
     remoteUrl: provider.proxy ? provider.url : null,
     headers: parseHeaders(provider.headers)
