@@ -58,4 +58,31 @@ describe('charts: findCharts', () => {
     const result = await findCharts(path.join(CHARTS_DIR, 'does-not-exist'))
     expect(result).to.deep.equal({})
   })
+
+  it('does not invoke onScanError for a non-existent directory (ENOENT)', async () => {
+    // ENOENT is the "user misconfiguration" path, not a transient failure —
+    // the caller should trust the empty result rather than preserve a stale
+    // last-good set because of it.
+    let errorFired = false
+    await findCharts(path.join(CHARTS_DIR, 'does-not-exist'), () => {
+      errorFired = true
+    })
+    expect(errorFired).to.equal(false)
+  })
+
+  it('invokes onScanError when readdir fails with a non-ENOENT code', async () => {
+    // Pointing findCharts at a file (not a directory) yields ENOTDIR from
+    // readdir, which represents the class of transient / unexpected failures
+    // the callback is meant to flag. The caller uses this signal to keep
+    // the last-good chart set instead of wiping providers.
+    let errorFired = false
+    const result = await findCharts(
+      path.join(CHARTS_DIR, 'test.mbtiles'),
+      () => {
+        errorFired = true
+      }
+    )
+    expect(errorFired).to.equal(true)
+    expect(result).to.deep.equal({})
+  })
 })

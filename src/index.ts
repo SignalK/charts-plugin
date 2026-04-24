@@ -258,6 +258,14 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
       return doStartup(settings) // return required for tests
     },
     stop: () => {
+      // Surface stop() calls so an unexpected Signal K-initiated restart
+      // (config reload, server shutdown, error cascade) is visible in logs
+      // instead of silently emptying chartProviders.
+      console.log(
+        `Signal K Charts: stop() called (${
+          Object.keys(chartProviders).length
+        } provider(s) will be released)`
+      )
       stopWatchers()
       // Cancel any running seeding jobs so a disabled plugin doesn't keep
       // pulling tiles from remote providers in the background.
@@ -346,9 +354,20 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
     // own per-file concurrency internally, so kicking off multiple roots at
     // once just overlaps their directory reads.
     let results: ({ [key: string]: ChartProvider } | undefined)[]
+    // onScanError fires when findCharts hits a non-trivial error (readdir
+    // failure, non-ENOENT fs.stat, MBTiles open crash) — i.e. something that
+    // could leave chartProviders incomplete. A reload that produces zero
+    // charts with errorsDuringScan=true is treated as transient and the
+    // last-good set is kept; without errors, zero is trusted as legitimate
+    // (user deleted all chart files).
+    let errorsDuringScan = false
     try {
       results = await Promise.all(
-        activeChartPaths.map((chartPath) => findCharts(chartPath))
+        activeChartPaths.map((chartPath) =>
+          findCharts(chartPath, () => {
+            errorsDuringScan = true
+          })
+        )
       )
     } catch (e) {
       // Keep the last-good chartProviders instead of wiping everything - a
@@ -385,6 +404,31 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
         Object.keys(newCharts).length
       } charts from ${activeChartPaths.join(', ')}.`
     )
+
+    // Defensive: if a reload turns up zero local charts AND something went
+    // wrong during the scan (errorsDuringScan) AND we previously held charts,
+    // treat the empty result as transient and keep the last-good set instead
+    // of quietly 404-ing every tile request until the next successful reload.
+    // Zero charts WITHOUT errors is trusted (user legitimately removed all
+    // charts).
+    const previousLocalCount = Object.keys(chartProviders).filter(
+      (id) => !activeOnlineProviders[id]
+    ).length
+    if (
+      Object.keys(newCharts).length === 0 &&
+      previousLocalCount > 0 &&
+      errorsDuringScan
+    ) {
+      console.warn(
+        `Signal K Charts: reload produced 0 charts from [${activeChartPaths.join(
+          ', '
+        )}] after errors during scan; keeping last-good set of ${previousLocalCount} chart(s).`
+      )
+      app.setPluginStatus(
+        composeStatus(perPath, Object.keys(activeOnlineProviders).length)
+      )
+      return
+    }
 
     reconcileMbtilesHandles(chartProviders)
     // Shallow assign is enough: newCharts and activeOnlineProviders both
