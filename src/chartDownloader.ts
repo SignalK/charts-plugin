@@ -18,6 +18,7 @@ import { ResourcesApi } from '@signalk/server-api'
 import { ChartProvider } from './types'
 import { lonLatToMercator, lonLatToTile, tileToBBox } from './projection'
 import { MIN_ZOOM } from './tileServer'
+import isSea from 'is-sea'
 
 export interface Tile {
   x: number
@@ -334,8 +335,6 @@ export class ChartDownloader {
 
     const hasSeaOrLandFilter = provider.onlySea !== provider.onlyLand;
     if (hasSeaOrLandFilter) {
-      const isSea = require('is-sea');
-      const isLand = (lat: number, lon: number) => !isSea(lat, lon);
       const [minLon, minLat, maxLon, maxLat] = tileToBBox(
         tile.x,
         tile.y,
@@ -343,7 +342,7 @@ export class ChartDownloader {
       )
       
       const hasSea = isSea(minLat, minLon) || isSea(minLat, maxLon) || isSea(maxLat, minLon) || isSea(maxLat, maxLon);
-      const hasLand = isLand(minLat, minLon) || isLand(minLat, maxLon) || isLand(maxLat, minLon) || isLand(maxLat, maxLon);
+      const hasLand = !isSea(minLat, minLon) || !isSea(minLat, maxLon) || !isSea(maxLat, minLon) || !isSea(maxLat, maxLon);
       if (provider.onlySea && !hasSea) {
         return null;
       }
