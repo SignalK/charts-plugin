@@ -141,6 +141,8 @@ describe('GET /resources/charts', () => {
           minzoom: 2,
           name: 'Test Name',
           proxy: false,
+          onlySea: false,
+          onlyLand: false,
           remoteUrl: null,
           scale: 250000,
           style: null,
