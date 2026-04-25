@@ -129,6 +129,8 @@ describe('GET /resources/charts', () => {
       })
       .then(() => get(testServer, '/signalk/v1/api/resources/charts'))
       .then((result) => {
+        // biomeFilter is undefined when no filter is configured; JSON
+        // serialization drops it, so the response body omits the field.
         expect(result.body['test-name']).to.deep.equal({
           bounds: [-180, -90, 180, 90],
           format: 'jpg',
@@ -145,6 +147,72 @@ describe('GET /resources/charts', () => {
           type: 'tilelayer',
           chartLayers: null
         })
+      })
+  })
+
+  it("online provider with biomeFilter='sea' carries the value through to the resolved config", () => {
+    return plugin
+      .start({
+        chartPaths: ['charts'],
+        onlineChartProviders: [
+          {
+            name: 'Sea Only',
+            minzoom: 2,
+            maxzoom: 15,
+            format: 'jpg',
+            url: 'https://example.com',
+            biomeFilter: 'sea'
+          }
+        ]
+      })
+      .then(() => get(testServer, '/signalk/v1/api/resources/charts'))
+      .then((result) => {
+        expect(result.body['sea-only'].biomeFilter).to.equal('sea')
+      })
+  })
+
+  it("online provider with biomeFilter='land' carries the value through to the resolved config", () => {
+    return plugin
+      .start({
+        chartPaths: ['charts'],
+        onlineChartProviders: [
+          {
+            name: 'Land Only',
+            minzoom: 2,
+            maxzoom: 15,
+            format: 'jpg',
+            url: 'https://example.com',
+            biomeFilter: 'land'
+          }
+        ]
+      })
+      .then(() => get(testServer, '/signalk/v1/api/resources/charts'))
+      .then((result) => {
+        expect(result.body['land-only'].biomeFilter).to.equal('land')
+      })
+  })
+
+  it("biomeFilter='' (empty-string sentinel) collapses to undefined", () => {
+    // The schema uses an empty string to mean "no filter" because some UI
+    // generators don't render a clearable enum. The plugin must treat that
+    // as equivalent to leaving the field off.
+    return plugin
+      .start({
+        chartPaths: ['charts'],
+        onlineChartProviders: [
+          {
+            name: 'No Filter',
+            minzoom: 2,
+            maxzoom: 15,
+            format: 'jpg',
+            url: 'https://example.com',
+            biomeFilter: '' as unknown as 'sea'
+          }
+        ]
+      })
+      .then(() => get(testServer, '/signalk/v1/api/resources/charts'))
+      .then((result) => {
+        expect(result.body['no-filter'].biomeFilter).to.equal(undefined)
       })
   })
 

@@ -71,9 +71,14 @@ export interface ChartProvider {
   style?: string
   layers?: string[]
   proxy?: boolean
+  biomeFilter?: BiomeFilter
   remoteUrl?: string
   headers?: { [key: string]: string }
 }
+
+// 'sea' downloads tiles that contain any sea; 'land' downloads tiles that
+// contain any land; absent means no filter and every tile is downloaded.
+export type BiomeFilter = 'sea' | 'land'
 
 export interface OnlineChartProvider {
   name: string
@@ -84,6 +89,7 @@ export interface OnlineChartProvider {
   format: 'png' | 'jpg'
   url: string
   proxy: boolean
+  biomeFilter?: BiomeFilter
   headers?: string[]
   style: string
   layers: string[]
