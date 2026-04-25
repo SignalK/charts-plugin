@@ -9,6 +9,7 @@ import { expect } from 'chai'
 import type { FeatureCollection } from 'geojson'
 import { ChartDownloader, Tile } from '../src/chartDownloader'
 import { ChartProvider } from '../src/types'
+import isSea from 'is-sea'
 
 // Minimal provider scaffold; only the fields the tile-math methods read must
 // be populated (minzoom, name, format). Using an as-cast rather than a full
@@ -167,5 +168,26 @@ describe('chartDownloader: fetchTileFromRemote', () => {
       z: 1
     })
     expect(result).to.equal(null)
+  })
+
+  it('Checks if a point is sea or land based on the tile and provider options', async () => {
+    const testPoints = [
+      { lat: 0, lon: 0, type: 'sea' },
+      { lat: 45, lon: 12, type: 'sea' },
+      { lat: -33, lon: 151, type: 'land' },
+      { lat: 60, lon: -5, type: 'sea' },
+      { lat: -12, lon: -77, type: 'land' },
+      { lat: 80, lon: 0, type: 'sea' },
+      { lat: -80, lon: 120, type: 'land' },
+      { lat: 25.5, lon: -45.2, type: 'sea' },
+      { lat: -10.1, lon: 30.3, type: 'sea' },
+      { lat: 5.0, lon: 179.9, type: 'land' }
+    ];
+    
+    testPoints.map(point => {
+      const { lat, lon } = point;
+      const result = isSea(lon, lat) ? 'sea' : 'land';
+      expect(result).to.equal(point.type);
+    });
   })
 })

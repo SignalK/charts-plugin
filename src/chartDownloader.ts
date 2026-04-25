@@ -18,6 +18,7 @@ import { ResourcesApi } from '@signalk/server-api'
 import { ChartProvider } from './types'
 import { lonLatToMercator, lonLatToTile, tileToBBox } from './projection'
 import { MIN_ZOOM } from './tileServer'
+import isSea from 'is-sea'
 
 export interface Tile {
   x: number
@@ -331,6 +332,25 @@ export class ChartDownloader {
     if (!provider.remoteUrl) {
       return null
     }
+
+    const hasSeaOrLandFilter = provider.onlySea !== provider.onlyLand;
+    if (hasSeaOrLandFilter) {
+      const [minLon, minLat, maxLon, maxLat] = tileToBBox(
+        tile.x,
+        tile.y,
+        tile.z
+      )
+      
+      const hasSea = isSea(minLat, minLon) || isSea(minLat, maxLon) || isSea(maxLat, minLon) || isSea(maxLat, maxLon);
+      const hasLand = !isSea(minLat, minLon) || !isSea(minLat, maxLon) || !isSea(maxLat, minLon) || !isSea(maxLat, maxLon);
+      if (provider.onlySea && !hasSea) {
+        return null;
+      }
+      if (provider.onlyLand && !hasLand) {
+        return null;
+      }
+    }
+
     let url = provider.remoteUrl
       .replace('{z}', tile.z.toString())
       // To be able to handle NOAA WMTS caching as a tilemap source with -2 offset
