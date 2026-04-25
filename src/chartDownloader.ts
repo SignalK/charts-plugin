@@ -18,6 +18,8 @@ import { ResourcesApi } from '@signalk/server-api'
 import { ChartProvider } from './types'
 import { lonLatToMercator, lonLatToTile, tileToBBox } from './projection'
 import { MIN_ZOOM } from './tileServer'
+import { BiomeOracle, defaultBiomeOracle } from './seaIndex'
+import { filterTilesByBiome } from './biomeFilter'
 
 export interface Tile {
   x: number
@@ -40,9 +42,15 @@ export class ChartSeedingManager {
     maxZoom: number,
     regionGUID: string | undefined = undefined,
     bbox: BBox | undefined = undefined,
-    tile: Tile | undefined = undefined
+    tile: Tile | undefined = undefined,
+    oracle: BiomeOracle = defaultBiomeOracle
   ): Promise<ChartDownloader> {
-    const downloader = new ChartDownloader(resourcesApi, chartsPath, provider)
+    const downloader = new ChartDownloader(
+      resourcesApi,
+      chartsPath,
+      provider,
+      oracle
+    )
     // Init must complete before the job is usable; callers get back a job that
     // knows its tile set and totalTiles. Without awaiting, a follow-up "start"
     // action would race the init reads of this.tiles.
@@ -75,6 +83,10 @@ export class ChartDownloader {
   private downloadedTiles = 0
   private failedTiles = 0
   private cachedTiles = 0
+  // Tiles dropped by the biome (sea/land) filter at seed start. Tracked
+  // separately from failedTiles so the progress fraction can include
+  // intentionally-skipped tiles and reach 1.0 cleanly when the rest finish.
+  private skippedByFilterTiles = 0
 
   private concurrentDownloadsLimit = 20
   private areaDescription = ''
@@ -86,7 +98,8 @@ export class ChartDownloader {
   constructor(
     private resourcesApi: ResourcesApi,
     private chartsPath: string,
-    private provider: ChartProvider
+    private provider: ChartProvider,
+    private biomeOracle: BiomeOracle = defaultBiomeOracle
   ) {}
 
   get ID(): number {
@@ -153,10 +166,26 @@ export class ChartDownloader {
 
     this.cancelRequested = false
     this.status = Status.Running
-    this.tilesToDownload = await this.filterCachedTiles(this.tiles)
     this.downloadedTiles = 0
     this.failedTiles = 0
-    this.cachedTiles = this.totalTiles - this.tilesToDownload.length
+    this.skippedByFilterTiles = 0
+    // Biome filter runs before cache and IO so totalTiles accounting stays
+    // honest, the live tile-serving path is never gated, and locality wins
+    // (skipping all-land children of an all-land parent) become possible.
+    // Throws here propagate up — failing the whole job is preferable to
+    // silently ignoring a misconfigured filter and downloading every tile.
+    const tilesAfterFilter =
+      this.provider.biomeFilter === undefined
+        ? this.tiles
+        : await filterTilesByBiome(
+            this.tiles,
+            this.provider.biomeFilter,
+            this.biomeOracle,
+            { isCancelled: () => this.cancelRequested }
+          )
+    this.skippedByFilterTiles = this.tiles.length - tilesAfterFilter.length
+    this.tilesToDownload = await this.filterCachedTiles(tilesAfterFilter)
+    this.cachedTiles = tilesAfterFilter.length - this.tilesToDownload.length
     const limit = pLimit(this.concurrentDownloadsLimit) // concurrent download limit
     let lastDiskCheck = 0
 
@@ -280,9 +309,13 @@ export class ChartDownloader {
       downloadedTiles: this.downloadedTiles,
       cachedTiles: this.cachedTiles,
       failedTiles: this.failedTiles,
+      skippedByFilterTiles: this.skippedByFilterTiles,
       progress:
         this.totalTiles > 0
-          ? (this.downloadedTiles + this.cachedTiles + this.failedTiles) /
+          ? (this.downloadedTiles +
+              this.cachedTiles +
+              this.failedTiles +
+              this.skippedByFilterTiles) /
             this.totalTiles
           : 0,
       status: this.status
@@ -331,6 +364,7 @@ export class ChartDownloader {
     if (!provider.remoteUrl) {
       return null
     }
+
     let url = provider.remoteUrl
       .replace('{z}', tile.z.toString())
       // To be able to handle NOAA WMTS caching as a tilemap source with -2 offset

@@ -37,16 +37,19 @@
     "appIcon": "./logo.svg"
   },
   "dependencies": {
+    "@geo-maps/earth-seas-10m": "^0.6.0",
     "@signalk/mbtiles": "0.1.1",
     "@signalk/server-api": "^2.0.0",
     "@turf/bbox": "^7.2.0",
     "@turf/boolean-intersects": "^7.2.0",
+    "@turf/boolean-point-in-polygon": "^7.3.5",
     "@turf/helpers": "^7.2.0",
     "check-disk-space": "^3.4.0",
     "fast-xml-parser": "^5.7.1",
     "geojson-antimeridian-cut": "^0.1.0",
     "lodash": "^4.17.11",
-    "p-limit": "^7"
+    "p-limit": "^7",
+    "rbush": "^4.0.1"
   },
   "repository": {
     "type": "git",
@@ -60,6 +63,7 @@
     "@types/lodash": "^4.14.191",
     "@types/mocha": "^10.0.10",
     "@types/node": "^25.6.0",
+    "@types/rbush": "^4.0.0",
     "c8": "^11.0.0",
     "chai": "6.2.2",
     "chai-http": "^5.1.2",

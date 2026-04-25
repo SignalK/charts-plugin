@@ -197,6 +197,14 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
                 'Create a proxy to serve remote tiles and cache fetched tiles from the remote server, to serve them locally on subsequent requests. Use webapp to configure seeding jobs to prefetch tiles to local cache.',
               default: false
             },
+            biomeFilter: {
+              type: 'string',
+              title: 'Biome filter',
+              description:
+                'Restrict which tiles are downloaded during seeding. "Sea" downloads only tiles that contain any sea, "Land" downloads only tiles that contain any land. Leave unset to download every tile.',
+              enum: ['', 'sea', 'land'],
+              default: ''
+            },
             headers: {
               type: 'array',
               title: 'Headers',
@@ -825,6 +833,13 @@ const convertOnlineProviderConfig = (provider: OnlineChartProvider) => {
       layers: provider.layers ? provider.layers : null
     },
     proxy: provider.proxy ? provider.proxy : false,
+    // The schema's empty-string sentinel ('' === no filter) collapses here
+    // to undefined so the downstream filter only runs when the user has
+    // actually opted in.
+    biomeFilter:
+      provider.biomeFilter === 'sea' || provider.biomeFilter === 'land'
+        ? provider.biomeFilter
+        : undefined,
     remoteUrl: provider.proxy ? provider.url : null,
     headers: parseHeaders(provider.headers)
   }
