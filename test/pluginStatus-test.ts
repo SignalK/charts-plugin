@@ -1,7 +1,5 @@
-import chai from 'chai'
+import { expect } from 'chai'
 import { composeStatus } from '../src/pluginStatus'
-
-const expect = chai.expect
 
 describe('composeStatus', () => {
   it('handles a single path with charts', () => {

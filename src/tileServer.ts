@@ -24,7 +24,11 @@ export const MIN_TILE_Z = 0
 export const responseHttpOptions = {
   headers: {
     'Cache-Control': 'public, max-age=7776000' // 90 days
-  }
+  },
+  // Charts commonly live under dot-prefixed paths (e.g. ~/.signalk/charts);
+  // express 5's send defaults to 'ignore', which 404s any path containing
+  // a dot segment.
+  dotfiles: 'allow' as const
 }
 
 // Tile file extensions recognised on the filesystem path. Add new entries
@@ -122,7 +126,14 @@ export const serveTileFromFilesystem = (
   res.sendFile(file, responseHttpOptions, (err) => {
     if (!err) return
     const code = (err as NodeJS.ErrnoException).code
-    if (code === 'ENOENT' || code === 'EACCES' || code === 'EISDIR') {
+    // express 5's send raises a NotFoundError (no `code`) when the file is
+    // missing, instead of the bare ENOENT it surfaced under express 4.
+    if (
+      code === 'ENOENT' ||
+      code === 'EACCES' ||
+      code === 'EISDIR' ||
+      err.name === 'NotFoundError'
+    ) {
       if (!res.headersSent) res.sendStatus(404)
     } else if (!res.headersSent) {
       res.sendStatus(500)

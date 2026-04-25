@@ -546,8 +546,11 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
     app.debug('** Registering API paths **')
 
     app.get(
-      `${chartTilesPath}/:identifier/:z([0-9]*)/:x([0-9]*)/:y([0-9]*)`,
-      async (req: Request, res: Response) => {
+      `${chartTilesPath}/:identifier/:z/:x/:y`,
+      async (
+        req: Request<{ identifier: string; z: string; x: string; y: string }>,
+        res: Response
+      ) => {
         const { identifier, z, x, y } = req.params
         if (!identifier || !z || !x || !y) {
           return res.sendStatus(404)
@@ -590,7 +593,7 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
 
     app.post(
       `${chartTilesPath}/cache/:identifier`,
-      async (req: Request, res: Response) => {
+      async (req: Request<{ identifier: string }>, res: Response) => {
         const { identifier } = req.params
         if (!identifier) {
           return res.sendStatus(404)
@@ -668,7 +671,7 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
 
     app.post(
       `${chartTilesPath}/cache/jobs/:id`,
-      (req: Request, res: Response) => {
+      (req: Request<{ id: string }>, res: Response) => {
         const { id } = req.params
         if (!id) {
           return res.sendStatus(404)
@@ -704,7 +707,7 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
 
     app.get(
       apiRoutePrefix[1] + '/charts/:identifier',
-      (req: Request, res: Response) => {
+      (req: Request<{ identifier: string }>, res: Response) => {
         const { identifier } = req.params
         if (!identifier) {
           return res.sendStatus(404)
