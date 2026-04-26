@@ -120,7 +120,7 @@ async function scanDir(
           if (chart) out.push(chart as ChartProvider)
         })()
       )
-    } 
+    }
     // Dropping this feature for now, the code will be removed once msallin sees this
     // else if (entry.name.match(/\.js$/i)) {
     //   // Dynamic chart-provider module: file exports createChartProvider()
@@ -144,7 +144,7 @@ async function scanDir(
     //       if (chart) out.push(chart)
     //     })()
     //   )
-    // } 
+    // }
     else if (entry.isDirectory()) {
       tasks.push(
         (async () => {

@@ -35,7 +35,9 @@ interface Config {
 }
 
 interface ChartProviderApp
-  extends ServerAPI, ResourceProviderRegistry, Application {
+  extends ServerAPI,
+    ResourceProviderRegistry,
+    Application {
   config: {
     ssl: boolean
     configPath: string
@@ -443,8 +445,8 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
   }) => {
     for (const old of Object.values(oldSet)) {
       // Skip providers that were only in the old set if they were proxy providers
-      //  we want to keep serving tiles from their existing mbtiles handle until 
-      // the new one is ready, and a missing handle means the new config failed 
+      //  we want to keep serving tiles from their existing mbtiles handle until
+      // the new one is ready, and a missing handle means the new config failed
       // to open the file, so there's no new handle to wait for.
       if (old.proxy === true) {
         continue
@@ -605,8 +607,12 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
     app.post(
       `${chartTilesPath}/cache/:identifier/migrate`,
       async (req: Request, res: Response) => {
-        console.log("Placeholder for migrate endpoint, which will trigger migration of cached tiles for provider with identifier", req.params.identifier)
-      })
+        console.log(
+          'Placeholder for migrate endpoint, which will trigger migration of cached tiles for provider with identifier',
+          req.params.identifier
+        )
+      }
+    )
 
     app.post(
       `${chartTilesPath}/cache/:identifier`,

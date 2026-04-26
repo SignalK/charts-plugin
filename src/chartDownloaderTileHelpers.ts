@@ -142,7 +142,7 @@ export function convertBboxToGeoJSON(
       [maxLon, minLat], // bottom-right
       [maxLon, maxLat], // top-right
       [minLon, maxLat], // top-left
-      [minLon, minLat]  // close ring
+      [minLon, minLat] // close ring
     ]
   ]
 
@@ -277,35 +277,30 @@ function pointInPolygonFeature(pt: Point, feature: Polygon): boolean {
 }
 
 function bboxIntersects(a: BBox, b: BBox): boolean {
-  return !(
-    a[2] < b[0] ||
-    a[0] > b[2] ||
-    a[3] < b[1] ||
-    a[1] > b[3]
-  );
+  return !(a[2] < b[0] || a[0] > b[2] || a[3] < b[1] || a[1] > b[3])
 }
 
 function isTileFullyInside(tileBBox: BBox, feature: Polygon): boolean {
-  const [minLon, minLat, maxLon, maxLat] = tileBBox;
+  const [minLon, minLat, maxLon, maxLat] = tileBBox
 
   return (
     pointInPolygonFeature([minLon, minLat], feature) &&
     pointInPolygonFeature([minLon, maxLat], feature) &&
     pointInPolygonFeature([maxLon, minLat], feature) &&
     pointInPolygonFeature([maxLon, maxLat], feature)
-  );
+  )
 }
 
 function subdivide(tile: Tile): Tile[] {
-  const { x, y, z } = tile;
-  const z2 = z + 1;
+  const { x, y, z } = tile
+  const z2 = z + 1
 
   return [
-    { x: x * 2,     y: y * 2,     z: z2 },
-    { x: x * 2 + 1, y: y * 2,     z: z2 },
-    { x: x * 2,     y: y * 2 + 1, z: z2 },
-    { x: x * 2 + 1, y: y * 2 + 1, z: z2 },
-  ];
+    { x: x * 2, y: y * 2, z: z2 },
+    { x: x * 2 + 1, y: y * 2, z: z2 },
+    { x: x * 2, y: y * 2 + 1, z: z2 },
+    { x: x * 2 + 1, y: y * 2 + 1, z: z2 }
+  ]
 }
 
 export function countTilesAdaptiveIterative(
@@ -313,7 +308,7 @@ export function countTilesAdaptiveIterative(
   minZoom: number,
   maxZoom: number
 ): number {
-  let count = 0;
+  let count = 0
   for (const feature of geojson.features) {
     if (
       feature.geometry.type !== 'Polygon' &&
@@ -322,47 +317,47 @@ export function countTilesAdaptiveIterative(
       console.warn('Skipping non-polygon feature')
       continue
     }
-    const polygonBBox = bbox(feature.geometry) as BBox;
-    const stack: Tile[] = [];
+    const polygonBBox = bbox(feature.geometry) as BBox
+    const stack: Tile[] = []
 
-    const minTile = lonLatToTileXY(polygonBBox[0], polygonBBox[3], minZoom);
-    const maxTile = lonLatToTileXY(polygonBBox[2], polygonBBox[1], minZoom);
+    const minTile = lonLatToTileXY(polygonBBox[0], polygonBBox[3], minZoom)
+    const maxTile = lonLatToTileXY(polygonBBox[2], polygonBBox[1], minZoom)
 
     for (let x = minTile[0]; x <= maxTile[0]; x++) {
       for (let y = minTile[1]; y <= maxTile[1]; y++) {
-        stack.push({ x, y, z: minZoom });
+        stack.push({ x, y, z: minZoom })
       }
     }
 
     while (stack.length > 0) {
-      const tile = stack.pop()!;
-      const tileBBox = tileToBBox(tile.x, tile.y, tile.z);
+      const tile = stack.pop()!
+      const tileBBox = tileToBBox(tile.x, tile.y, tile.z)
 
       // Fast bbox reject
       if (!bboxIntersects(tileBBox, polygonBBox)) {
-        continue;
+        continue
       }
 
       // This assumes that if all for corners of a tile is inside the polygon, then the whole tile is inside. This is not always true (e.g. a C shaped polygon), but should be good enough for estimation.
       if (isTileFullyInside(tileBBox, feature.geometry as Polygon)) {
-        const levels = maxZoom - tile.z;
-        count += (Math.pow(4, levels + 1) - 1) / 3;
-        continue;
+        const levels = maxZoom - tile.z
+        count += (Math.pow(4, levels + 1) - 1) / 3
+        continue
       }
-      const tilePoly = bboxPolygon(tileBBox);
+      const tilePoly = bboxPolygon(tileBBox)
       if (!booleanIntersects(feature as Feature, tilePoly)) {
-        continue;
+        continue
       }
-      count++;
+      count++
       if (tile.z < maxZoom) {
-        const children = subdivide(tile);
+        const children = subdivide(tile)
 
         for (let i = children.length - 1; i >= 0; i--) {
-          stack.push(children[i]);
+          stack.push(children[i])
         }
       }
     }
   }
 
-  return count;
+  return count
 }

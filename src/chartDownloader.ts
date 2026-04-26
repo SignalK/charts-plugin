@@ -15,7 +15,6 @@ import {
 
 export type { Tile }
 
-
 import {
   openOrCreateMbtiles,
   deleteTilesInChunks,
@@ -224,7 +223,10 @@ export class ChartDownloader {
           } else {
             this.downloadedTiles++
           }
-          this.totalTiles = Math.max(this.totalTiles, this.downloadedTiles + this.failedTiles + this.cachedTiles)
+          this.totalTiles = Math.max(
+            this.totalTiles,
+            this.downloadedTiles + this.failedTiles + this.cachedTiles
+          )
         } catch (err) {
           this.failedTiles++
         }
@@ -237,27 +239,25 @@ export class ChartDownloader {
 
     if (this.options.mbtiles) {
       this.status = 'Creating MBTiles'
-      const safeRegionName = this.regionName.normalize('NFKC')                 // normalize unicode
-                                            .replace(/[^a-zA-Z0-9_-]/g, '_')   // allow only safe chars
-                                            .replace(/_+/g, '_')               // collapse repeats
-                                            .replace(/^_+|_+$/g, '')           // trim underscores
-                                            .slice(0, 100);                   // limit length
-      const baseDir = path.resolve(this.cachePath, 'mbtiles');
+      const safeRegionName = this.regionName
+        .normalize('NFKC') // normalize unicode
+        .replace(/[^a-zA-Z0-9_-]/g, '_') // allow only safe chars
+        .replace(/_+/g, '_') // collapse repeats
+        .replace(/^_+|_+$/g, '') // trim underscores
+        .slice(0, 100) // limit length
+      const baseDir = path.resolve(this.cachePath, 'mbtiles')
       const filePath = path.resolve(
         baseDir,
         `${safeRegionName}_${this.provider.identifier}.mbtiles`
-      );
+      )
 
       if (!filePath.startsWith(baseDir)) {
-        throw new Error('Invalid path detected');
+        throw new Error('Invalid path detected')
       }
 
       // TODO: Check for diskspace
 
-      const mbtiles = await openOrCreateMbtiles(
-        filePath,
-        this.provider
-      )
+      const mbtiles = await openOrCreateMbtiles(filePath, this.provider)
       const iterator = this.tiles()
       for (const tile of iterator) {
         const buffer = await ChartDownloader.getTileFromMbTiles(
@@ -366,7 +366,9 @@ export class ChartDownloader {
 
     // Cache miss: fetch from remote
     const buffer = await ChartDownloader.fetchTileFromRemote(provider, tile)
-    ChartDownloader.CachingEnabled = await ChartDownloader.hasDiskSpace(chartsPath)
+    ChartDownloader.CachingEnabled = await ChartDownloader.hasDiskSpace(
+      chartsPath
+    )
     if (ChartDownloader.CachingEnabled && buffer) {
       stats.misses++
       //Writing to mbtiles must be awaited
@@ -506,22 +508,23 @@ export class ChartDownloader {
   }
 
   static async hasDiskSpace(path: string): Promise<boolean> {
-    const now = Date.now();
+    const now = Date.now()
 
     // cache for 2 seconds
     if (now - ChartDownloader.lastDiskSpaceCheck < 2000) {
-      return ChartDownloader.lastDiskSpaceResult;
+      return ChartDownloader.lastDiskSpaceResult
     }
 
     try {
       const { free } = await checkDiskSpace(path)
-      ChartDownloader.lastDiskSpaceResult = free >= ChartDownloader.MINIMUM_FREE_DISK_SPACE;
+      ChartDownloader.lastDiskSpaceResult =
+        free >= ChartDownloader.MINIMUM_FREE_DISK_SPACE
     } catch (err) {
-      ChartDownloader.lastDiskSpaceResult = false;
+      ChartDownloader.lastDiskSpaceResult = false
     }
 
-    ChartDownloader.lastDiskSpaceCheck = now;
-  return ChartDownloader.lastDiskSpaceResult;
+    ChartDownloader.lastDiskSpaceCheck = now
+    return ChartDownloader.lastDiskSpaceResult
   }
 
   static getStatistics() {

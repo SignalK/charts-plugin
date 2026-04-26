@@ -1,7 +1,12 @@
 import { mkdirSync } from 'fs'
 import path from 'path'
 import MBTiles from '@signalk/mbtiles'
-import { ChartProvider, OnlineChartProvider, MBTilesHandle, MBTilesMetadata } from './types'
+import {
+  ChartProvider,
+  OnlineChartProvider,
+  MBTilesHandle,
+  MBTilesMetadata
+} from './types'
 import type { FeatureCollection, Polygon, Feature } from 'geojson'
 import { bbox } from '@turf/bbox'
 import booleanIntersects from '@turf/boolean-intersects'
