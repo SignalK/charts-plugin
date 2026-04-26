@@ -188,15 +188,15 @@ export const serveTileFromCacheOrRemote = async (
   x: number,
   y: number
 ) => {
-  const buffer = await ChartDownloader.getTileFromCacheOrRemote(
+  const tile = await ChartDownloader.getTileFromCacheOrRemote(
     cachePath,
     provider,
     { x, y, z }
   )
-  if (!buffer) {
+  if (!tile.buffer) {
     res.sendStatus(502)
     return
   }
   res.set('Content-Type', `image/${provider.format}`)
-  res.send(buffer)
+  res.send(tile.buffer)
 }

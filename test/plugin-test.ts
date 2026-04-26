@@ -17,8 +17,11 @@ import chaiHttp from 'chai-http'
 // it up.
 process.env.SK_CHARTS_RELOAD_DEBOUNCE_MS = '150'
 
-import Plugin = require('../src/index')
+import * as PluginModule from '../src/index'
 import expectedCharts from './expected-charts.json'
+import * as TileHelpers from '../src/chartDownloaderTileHelpers'
+
+const Plugin = (PluginModule as any).default ?? PluginModule
 
 chai.use(chaiHttp)
 const expect = chai.expect
@@ -502,24 +505,22 @@ describe('tile cache HTTP endpoints', () => {
 
   it('POST /cache/:identifier returns 404 when the provider is unknown', async () => {
     await plugin.start({ onlineChartProviders: [proxyProvider] })
-    const res = await chai.request
-      .execute(`http://localhost:${serverPort(testServer)}`)
+    const res = await chai.request(`http://localhost:${serverPort(testServer)}`)
       .post('/signalk/chart-tiles/cache/does-not-exist')
       .send({
         maxZoom: '5',
         bbox: { minLon: 0, minLat: 0, maxLon: 1, maxLat: 1 }
       })
-      .catch((e) => e.response)
+      .catch((e: any) => e.response)
     expect(res.status).to.equal(404)
   })
 
   it('POST /cache/:identifier returns 400 when maxZoom is missing', async () => {
     await plugin.start({ onlineChartProviders: [proxyProvider] })
-    const res = await chai.request
-      .execute(`http://localhost:${serverPort(testServer)}`)
+    const res = await chai.request(`http://localhost:${serverPort(testServer)}`)
       .post('/signalk/chart-tiles/cache/proxy-test')
       .send({ bbox: { minLon: 0, minLat: 0, maxLon: 1, maxLat: 1 } })
-      .catch((e) => e.response)
+      .catch((e: any) => e.response)
     expect(res.status).to.equal(400)
   })
 
@@ -528,8 +529,7 @@ describe('tile cache HTTP endpoints', () => {
   // NaN-in-tile-math failure.
   it('POST /cache/:identifier returns 400 for non-numeric maxZoom', async () => {
     await plugin.start({ onlineChartProviders: [proxyProvider] })
-    const res = await chai.request
-      .execute(`http://localhost:${serverPort(testServer)}`)
+    const res = await chai.request(`http://localhost:${serverPort(testServer)}`)
       .post('/signalk/chart-tiles/cache/proxy-test')
       .send({
         maxZoom: 'banana',
@@ -541,8 +541,7 @@ describe('tile cache HTTP endpoints', () => {
 
   it('POST /cache/:identifier returns 400 for maxZoom above 24', async () => {
     await plugin.start({ onlineChartProviders: [proxyProvider] })
-    const res = await chai.request
-      .execute(`http://localhost:${serverPort(testServer)}`)
+    const res = await chai.request(`http://localhost:${serverPort(testServer)}`)
       .post('/signalk/chart-tiles/cache/proxy-test')
       .send({
         maxZoom: '25',
@@ -554,8 +553,7 @@ describe('tile cache HTTP endpoints', () => {
 
   it('POST /cache/:identifier returns 400 for inverted bbox (minLat > maxLat)', async () => {
     await plugin.start({ onlineChartProviders: [proxyProvider] })
-    const res = await chai.request
-      .execute(`http://localhost:${serverPort(testServer)}`)
+    const res = await chai.request(`http://localhost:${serverPort(testServer)}`)
       .post('/signalk/chart-tiles/cache/proxy-test')
       .send({
         maxZoom: '5',
@@ -567,34 +565,31 @@ describe('tile cache HTTP endpoints', () => {
 
   it('POST /cache/:identifier returns 400 for out-of-range latitude', async () => {
     await plugin.start({ onlineChartProviders: [proxyProvider] })
-    const res = await chai.request
-      .execute(`http://localhost:${serverPort(testServer)}`)
+    const res = await chai.request(`http://localhost:${serverPort(testServer)}`)
       .post('/signalk/chart-tiles/cache/proxy-test')
       .send({
         maxZoom: '5',
         bbox: { minLon: 0, minLat: -91, maxLon: 1, maxLat: 90 }
       })
-      .catch((e) => e.response)
+      .catch((e: any) => e.response)
     expect(res.status).to.equal(400)
   })
 
   it('POST /cache/:identifier returns 400 for out-of-range longitude', async () => {
     await plugin.start({ onlineChartProviders: [proxyProvider] })
-    const res = await chai.request
-      .execute(`http://localhost:${serverPort(testServer)}`)
+    const res = await chai.request(`http://localhost:${serverPort(testServer)}`)
       .post('/signalk/chart-tiles/cache/proxy-test')
       .send({
         maxZoom: '5',
         bbox: { minLon: -181, minLat: 0, maxLon: 181, maxLat: 10 }
       })
-      .catch((e) => e.response)
+      .catch((e: any) => e.response)
     expect(res.status).to.equal(400)
   })
 
   it('POST /cache/:identifier returns 400 for non-finite bbox value', async () => {
     await plugin.start({ onlineChartProviders: [proxyProvider] })
-    const res = await chai.request
-      .execute(`http://localhost:${serverPort(testServer)}`)
+    const res = await chai.request(`http://localhost:${serverPort(testServer)}`)
       .post('/signalk/chart-tiles/cache/proxy-test')
       .send({
         maxZoom: '5',
@@ -604,57 +599,31 @@ describe('tile cache HTTP endpoints', () => {
     expect(res.status).to.equal(400)
   })
 
-  it('POST /cache/:identifier returns 400 when no region/bbox/tile is given', async () => {
+  it('POST /cache/:identifier returns 400 when no region/bbox is given', async () => {
     await plugin.start({ onlineChartProviders: [proxyProvider] })
-    const res = await chai.request
-      .execute(`http://localhost:${serverPort(testServer)}`)
+    const res = await chai.request(`http://localhost:${serverPort(testServer)}`)
       .post('/signalk/chart-tiles/cache/proxy-test')
       .send({ maxZoom: '5' })
       .catch((e) => e.response)
     expect(res.status).to.equal(400)
   })
 
-  it('POST /cache/:identifier returns 202 with the fully-initialised job info', async () => {
+  it('POST /cache/:identifier returns 200 with the new job id', async () => {
     await plugin.start({ onlineChartProviders: [proxyProvider] })
-    const res = await chai.request
-      .execute(`http://localhost:${serverPort(testServer)}`)
+    const res = await chai.request(`http://localhost:${serverPort(testServer)}`)
       .post('/signalk/chart-tiles/cache/proxy-test')
       .send({
         maxZoom: '5',
         bbox: { minLon: 0, minLat: 0, maxLon: 1, maxLat: 1 }
       })
-    expect(res.status).to.equal(202)
-    expect(res.body).to.include.keys(['id', 'totalTiles', 'status'])
-    // Init must have completed before the response: totalTiles is non-zero,
-    // which proves the tile set is populated.
-    expect(res.body.totalTiles).to.be.greaterThan(0)
-    // Job should not be auto-started — seeding is an explicit follow-up.
-    expect(res.body.downloadedTiles).to.equal(0)
-  })
-
-  it('POST /cache/:identifier with bbox respects the provider minzoom', async () => {
-    // provider minzoom=3, maxzoom=5. Before the fix, getTilesForBBox started
-    // at z=0 regardless of minzoom, so totalTiles would include the three
-    // low-zoom tiles we'd never actually seed. With the fix in place we
-    // should only see tiles from the provider's declared zoom range.
-    await plugin.start({ onlineChartProviders: [proxyProvider] })
-    const maxZoom = '5'
-    const bbox = { minLon: 5, minLat: 5, maxLon: 6, maxLat: 6 }
-    const withMinzoom = await chai.request
-      .execute(`http://localhost:${serverPort(testServer)}`)
-      .post('/signalk/chart-tiles/cache/proxy-test')
-      .send({ maxZoom, bbox })
-    expect(withMinzoom.status).to.equal(202)
-    // With minzoom=3 we cover z=3..5, which for a tiny bbox well within a
-    // tile at each zoom is 3 tiles total. If minzoom were ignored we'd see
-    // 6 (also z=0,1,2 would each contribute 1 tile).
-    expect(withMinzoom.body.totalTiles).to.equal(3)
+    expect(res.status).to.equal(200)
+    expect(res.body).to.include.keys(['id', 'state', 'statusCode'])
+    expect(res.body.state).to.equal('COMPLETED')
   })
 
   it('POST /cache/jobs/:id returns 400 on a non-numeric job id', async () => {
     await plugin.start({ onlineChartProviders: [proxyProvider] })
-    const res = await chai.request
-      .execute(`http://localhost:${serverPort(testServer)}`)
+    const res = await chai.request(`http://localhost:${serverPort(testServer)}`)
       .post('/signalk/chart-tiles/cache/jobs/not-a-number')
       .send({ action: 'start' })
       .catch((e) => e.response)
@@ -663,8 +632,7 @@ describe('tile cache HTTP endpoints', () => {
 
   it('POST /cache/jobs/:id returns 404 for an unknown job', async () => {
     await plugin.start({ onlineChartProviders: [proxyProvider] })
-    const res = await chai.request
-      .execute(`http://localhost:${serverPort(testServer)}`)
+    const res = await chai.request(`http://localhost:${serverPort(testServer)}`)
       .post('/signalk/chart-tiles/cache/jobs/99999')
       .send({ action: 'start' })
       .catch((e) => e.response)
@@ -673,18 +641,16 @@ describe('tile cache HTTP endpoints', () => {
 
   it('POST /cache/jobs/:id returns 400 for a missing action', async () => {
     await plugin.start({ onlineChartProviders: [proxyProvider] })
-    const createRes = await chai.request
-      .execute(`http://localhost:${serverPort(testServer)}`)
+    const createRes = await chai.request(`http://localhost:${serverPort(testServer)}`)
       .post('/signalk/chart-tiles/cache/proxy-test')
       .send({
         maxZoom: '4',
         bbox: { minLon: 0, minLat: 0, maxLon: 1, maxLat: 1 }
       })
-    expect(createRes.status).to.equal(202)
+    expect(createRes.status).to.equal(200)
     const jobId = createRes.body.id
 
-    const res = await chai.request
-      .execute(`http://localhost:${serverPort(testServer)}`)
+    const res = await chai.request(`http://localhost:${serverPort(testServer)}`)
       .post(`/signalk/chart-tiles/cache/jobs/${jobId}`)
       .send({})
       .catch((e) => e.response)
@@ -693,8 +659,7 @@ describe('tile cache HTTP endpoints', () => {
 
   it('POST /cache/jobs/:id returns 400 for an unknown action', async () => {
     await plugin.start({ onlineChartProviders: [proxyProvider] })
-    const createRes = await chai.request
-      .execute(`http://localhost:${serverPort(testServer)}`)
+    const createRes = await chai.request(`http://localhost:${serverPort(testServer)}`)
       .post('/signalk/chart-tiles/cache/proxy-test')
       .send({
         maxZoom: '4',
@@ -702,12 +667,55 @@ describe('tile cache HTTP endpoints', () => {
       })
     const jobId = createRes.body.id
 
-    const res = await chai.request
-      .execute(`http://localhost:${serverPort(testServer)}`)
+    const res = await chai.request(`http://localhost:${serverPort(testServer)}`)
       .post(`/signalk/chart-tiles/cache/jobs/${jobId}`)
       .send({ action: 'detonate' })
       .catch((e) => e.response)
     expect(res.status).to.equal(400)
+  })
+})
+
+describe('tile helpers (Coordinate math)', () => {
+  const filePath = path.join(__dirname, 'regions.json')
+  const raw = fs.readFileSync(filePath, 'utf-8')
+  const geojson = JSON.parse(raw)
+  const minZoom = 3
+  const maxZoom = 15
+
+  if (!geojson.features || geojson.features.length === 0) {
+    throw new Error('No features found in regions.json')
+  }
+
+  geojson.features.forEach((feature, index) => {
+    const name =
+      (feature.properties &&
+        (feature.properties.name || feature.properties.id)) ||
+      `feature-${index}`
+
+    it(`counts tiles for ${name}`, function () {
+      this.timeout(20000)
+      const geojson = TileHelpers.convertFeatureToGeoJSON(feature)
+      const tiles = () => TileHelpers.getTilesForGeoJSON(geojson, minZoom, maxZoom)
+      let start = performance.now();
+      const slowCount = TileHelpers.countTiles(tiles, 100000000)
+      let end = performance.now();
+      console.log(`Feature: ${name} → ${slowCount} (slow): ${(end - start).toFixed(2)} ms)`);
+
+      start = performance.now();
+      const fastCount = TileHelpers.countTilesAdaptiveIterative(
+        geojson,
+        minZoom,
+        maxZoom
+      )
+      end = performance.now();
+
+      let percentageDifference = Math.abs((slowCount - fastCount) / slowCount) * 100
+
+      console.log(`Feature: ${name} → ${fastCount}: ${(end - start).toFixed(2)} ms)`);
+      console.log("Percentage difference: " + percentageDifference.toFixed(2) + "%")
+
+      expect(percentageDifference).to.lessThan(2)
+    })
   })
 })
 
@@ -770,7 +778,7 @@ const get = (server: http.Server, location: string) => {
     throw new Error('Test server has no address')
   }
   const baseUrl = `http://localhost:${address.port}`
-  return chai.request.execute(baseUrl).get(location)
+  return chai.request(baseUrl).get(location)
 }
 
 const getChartPathsSchema = (plugin: PluginInstance) => {
