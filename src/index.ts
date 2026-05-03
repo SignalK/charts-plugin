@@ -4,13 +4,22 @@ import * as _ from 'lodash'
 import { findCharts } from './charts'
 import { apiRoutePrefix } from './constants'
 import { composeStatus, ChartPathCount } from './pluginStatus'
-import { ChartProvider, MBTilesHandle, OnlineChartProvider } from './types'
+import {
+  ChartProvider,
+  MBTilesHandle,
+  OnlineChartProvider,
+  TokenProviderConfig
+} from './types'
 import {
   ChartSeedingManager,
   ChartDownloader,
   JobOptions
 } from './chartDownloader'
 import { openOrCreateMbtiles } from './chartDownloaderMBTilesHelpers'
+import {
+  chartProviderFromTokenConfig,
+  validateTokenProviderConfig
+} from './tokenProvider'
 import {
   MAX_ZOOM,
   MIN_ZOOM,
@@ -32,6 +41,10 @@ interface Config {
   chartPaths: string[]
   cachePath: string
   onlineChartProviders: OnlineChartProvider[]
+  // Declarative token-based providers: token-endpoint + tile-template
+  // configs that resolve at fetch time. Replaces the auto-imported `.js`
+  // providers dropped in favour of a code-execution-free design.
+  tokenProviders?: TokenProviderConfig[]
 }
 
 interface ChartProviderApp
@@ -84,6 +97,11 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
   let reloadTimer: NodeJS.Timeout | undefined
   let activeChartPaths: string[] = []
   let activeOnlineProviders: { [key: string]: object } = {}
+  // Built from props.tokenProviders during doStartup; merged into
+  // chartProviders alongside the online providers. The ChartProvider value
+  // here holds an `_tokenProvider` handle so the proxy fetch path can call
+  // ensureFreshToken() before reading remoteUrl / headers.
+  let activeTokenProviders: { [key: string]: ChartProvider } = {}
   // Last scan result, surfaced in the config schema description so the admin
   // UI shows per-path counts when the user reopens the plugin config. Issue #8.
   let lastChartPathCounts: ChartPathCount[] = []
@@ -233,6 +251,109 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
             }
           }
         }
+      },
+      tokenProviders: {
+        type: 'array',
+        title: 'Token providers',
+        description:
+          'Declarative configs for chart providers that need a token ' +
+          'fetched from a separate URL. The token is cached for ttlSeconds ' +
+          'and templated into the tile URL/headers as {token.<field>}. ' +
+          'Use {a-b} in URLs for sharded hostnames (random integer in [a,b]).',
+        items: {
+          type: 'object',
+          title: 'Token provider',
+          required: ['identifier', 'name', 'tokenEndpoint', 'tile'],
+          properties: {
+            identifier: {
+              type: 'string',
+              title: 'Identifier',
+              description:
+                'Stable ID used in tile URLs (URL-safe; e.g. "navionics").'
+            },
+            name: { type: 'string', title: 'Name' },
+            description: { type: 'string', title: 'Description' },
+            type: {
+              type: 'string',
+              title: 'Map source type',
+              default: 'tilelayer',
+              enum: ['tilelayer', 'WMTS']
+            },
+            format: {
+              type: 'string',
+              title: 'Format',
+              default: 'png',
+              enum: ['png', 'jpg', 'webp', 'pbf', 'mvt']
+            },
+            scale: { type: 'number', title: 'Scale', default: 250000 },
+            minzoom: {
+              type: 'number',
+              title: 'Min zoom',
+              minimum: MIN_ZOOM,
+              maximum: MAX_ZOOM
+            },
+            maxzoom: {
+              type: 'number',
+              title: 'Max zoom',
+              minimum: MIN_ZOOM,
+              maximum: MAX_ZOOM
+            },
+            bounds: {
+              type: 'array',
+              title: 'Bounds [minLon, minLat, maxLon, maxLat]',
+              items: { type: 'number' },
+              minItems: 4,
+              maxItems: 4
+            },
+            tokenEndpoint: {
+              type: 'object',
+              title: 'Token endpoint',
+              required: ['url', 'ttlSeconds'],
+              properties: {
+                url: { type: 'string', title: 'URL' },
+                method: {
+                  type: 'string',
+                  title: 'Method',
+                  default: 'GET',
+                  enum: ['GET', 'POST']
+                },
+                headers: {
+                  type: 'object',
+                  title: 'Request headers',
+                  additionalProperties: { type: 'string' }
+                },
+                body: { type: 'string', title: 'Request body' },
+                ttlSeconds: {
+                  type: 'number',
+                  title: 'TTL (seconds)',
+                  description:
+                    'How long a fetched token is reused before re-fetching.',
+                  minimum: 1
+                }
+              }
+            },
+            tile: {
+              type: 'object',
+              title: 'Tile request template',
+              required: ['url'],
+              properties: {
+                url: {
+                  type: 'string',
+                  title: 'URL template',
+                  description:
+                    'Tile URL with {z}/{x}/{y}, {token.<field>}, and {a-b}.'
+                },
+                headers: {
+                  type: 'object',
+                  title: 'Request headers',
+                  description:
+                    'Header template (values may reference {token.<field>}).',
+                  additionalProperties: { type: 'string' }
+                }
+              }
+            }
+          }
+        }
       }
     }
   })
@@ -317,10 +438,32 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
       }
       activeOnlineProviders[provider.identifier] = provider
     }
+
+    // Build token providers. A bad config entry shouldn't take the whole
+    // plugin out — log and skip the offender so the rest still load.
+    activeTokenProviders = {}
+    for (let i = 0; i < (props.tokenProviders ?? []).length; i++) {
+      const raw = (props.tokenProviders ?? [])[i]
+      try {
+        const cfg = validateTokenProviderConfig(raw, i)
+        const provider = chartProviderFromTokenConfig(cfg)
+        if (activeTokenProviders[provider.identifier]) {
+          app.debug(
+            `Duplicate token provider identifier "${provider.identifier}"; ` +
+              `the later entry wins. Rename one to avoid the collision.`
+          )
+        }
+        activeTokenProviders[provider.identifier] = provider
+      } catch (err) {
+        console.warn(`Skipping ${(err as Error).message}`)
+      }
+    }
+
     app.debug(
       `Start charts plugin. Chart paths: ${activeChartPaths.join(
         ', '
-      )}, online charts: ${Object.keys(activeOnlineProviders).length}`
+      )}, online charts: ${Object.keys(activeOnlineProviders).length}, ` +
+        `token providers: ${Object.keys(activeTokenProviders).length}`
     )
 
     // Routes and the v2 provider registration are idempotent — Signal K can
@@ -433,6 +576,19 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
         )
       }
       chartProviders[id] = provider as ChartProvider
+    }
+    // Token providers (declarative token-rotating configs) merge in last
+    // and win over a colliding online or local entry: the admin took the
+    // explicit step of configuring one, so a stale auto-discovered chart
+    // shouldn't shadow it.
+    for (const [id, provider] of Object.entries(activeTokenProviders)) {
+      if (chartProviders[id]) {
+        app.debug(
+          `Token provider identifier "${id}" collides with another ` +
+            `provider; the token provider wins.`
+        )
+      }
+      chartProviders[id] = provider
     }
 
     // Open / create an mbtiles cache file for every proxy provider so downloaded

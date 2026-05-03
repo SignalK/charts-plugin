@@ -64,6 +64,10 @@ async function loadMBTiles() {
 // can't send the scan into node_modules or a symlink loop. File parsing
 // (openMbtilesFile / directoryToMapInfo) runs concurrently under a global
 // limiter — 500 MBTiles opened serially on a Pi SD card was a 5-30s startup stall.
+// `.js` files are intentionally NOT scanned: providers that need
+// runtime-computed URLs (rotating bearer tokens etc.) are configured
+// declaratively via `tokenProviders` in plugin settings (see
+// src/tokenProvider.ts).
 const MAX_SCAN_DEPTH = 8
 const PARSE_CONCURRENCY = 12
 
@@ -132,32 +136,7 @@ async function scanDir(
           if (chart) out.push(chart as ChartProvider)
         })()
       )
-    }
-    // Dropping this feature for now, the code will be removed once msallin sees this
-    // else if (entry.name.match(/\.js$/i)) {
-    //   // Dynamic chart-provider module: file exports createChartProvider()
-    //   // returning a ChartProvider. Lets users drop a .js module into a chart
-    //   // directory without rebuilding the plugin.
-    //   tasks.push(
-    //     (async () => {
-    //       const chart = await limit(async () => {
-    //         try {
-    //           const mod = await import(entryPath)
-    //           const provider: ChartProvider = mod.createChartProvider()
-    //           return provider
-    //         } catch (err) {
-    //           console.error(
-    //             `Error loading chart module ${entryPath}`,
-    //             (err as Error).message
-    //           )
-    //           return null
-    //         }
-    //       })
-    //       if (chart) out.push(chart)
-    //     })()
-    //   )
-    // }
-    else if (entry.isDirectory()) {
+    } else if (entry.isDirectory()) {
       tasks.push(
         (async () => {
           const chart = await limit(() =>
