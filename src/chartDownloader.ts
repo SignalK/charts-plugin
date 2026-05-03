@@ -450,6 +450,13 @@ export class ChartDownloader {
     tile: Tile,
     timeoutMs = 5000
   ): Promise<Buffer | null> {
+    // Token providers fetch their token lazily; awaiting here ensures
+    // remoteUrl/headers below template against a non-stale token. Fast-path
+    // when the cached token is still inside its TTL: the call returns
+    // synchronously without I/O.
+    if (provider._tokenProvider) {
+      await provider._tokenProvider.ensureFreshToken()
+    }
     // Local (non-proxy) providers have no remoteUrl; the POST /cache endpoint
     // is open to any provider, so callers can still land here and should get
     // a well-defined null rather than a crash.
