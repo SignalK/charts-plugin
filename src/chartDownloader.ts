@@ -1,8 +1,28 @@
 import path from 'path'
+import type { DatabaseSync } from 'node:sqlite'
 import type { BBox } from 'geojson'
 import checkDiskSpace from 'check-disk-space'
 import { ChartProvider, MBTilesHandle } from './types'
 import { lonLatToMercator, tileToBBox } from './projection'
+
+// All DB-touching helpers (delete / purge / vacuum / region-tile listing) need
+// the raw node:sqlite handle exposed by @signalk/mbtiles. Reaching through
+// `provider._mbtilesHandle!._db!` worked but lied about the contract: a proxy
+// provider whose mbtiles file failed to open at startup has neither, and the
+// non-null assertions papered over the resulting TypeError. Centralising here
+// gives a single descriptive failure surface and removes seven `!` operators
+// from call sites.
+function requireMbtilesDb(provider: ChartProvider): DatabaseSync {
+  const db = provider._mbtilesHandle?._db
+  if (!db) {
+    throw new Error(
+      `Provider "${provider.identifier}": mbtiles cache not open. ` +
+        `Configure the provider with proxy:true and ensure the cache path ` +
+        `is writable; this operation needs the raw SQLite handle.`
+    )
+  }
+  return db
+}
 
 import {
   Tile,
@@ -133,9 +153,13 @@ export class ChartDownloader {
     const geojson = convertFeatureToGeoJSON(feature)
 
     this.tiles = () => getTilesForGeoJSON(geojson, minZoom, maxZoom)
+    // Defer the requireMbtilesDb call to factory invocation: the handle may
+    // not be open yet when initialize* runs (e.g. createJob before the
+    // proxy mbtiles is reconciled), but it must be open by the time the
+    // generator is iterated.
     this.tilesInDB = () =>
       getMBTilesForPolygon(
-        this.provider._mbtilesHandle!._db!,
+        requireMbtilesDb(this.provider),
         geojson,
         minZoom,
         maxZoom
@@ -155,7 +179,7 @@ export class ChartDownloader {
     this.tiles = () => getTilesForGeoJSON(geojson, minZoom, maxZoom)
     this.tilesInDB = () =>
       getMBTilesForPolygon(
-        this.provider._mbtilesHandle!._db!,
+        requireMbtilesDb(this.provider),
         geojson,
         minZoom,
         maxZoom
@@ -278,28 +302,20 @@ export class ChartDownloader {
     this.deletedTiles = 0
     this.type = JobType.Delete
     this.status = 'Deleting tiles'
-    await deleteTilesInChunks(
-      this.provider._mbtilesHandle!._db!,
-      this.tilesInDB(),
-      1000,
-      (deleted) => {
-        console.log(`Deleted ${deleted} / ${this.totalTiles}`)
-      }
-    )
+    const db = requireMbtilesDb(this.provider)
+    await deleteTilesInChunks(db, this.tilesInDB(), 1000, (deleted) => {
+      console.log(`Deleted ${deleted} / ${this.totalTiles}`)
+    })
     this.status = 'Purging orphaned images'
-    await purgeAllOrphanImages(
-      this.provider._mbtilesHandle!._db!,
-      1000,
-      (deleted, totalDeleted) => {
-        this.deletedTiles += deleted
-        console.log(
-          `Purged ${totalDeleted} orphaned images (last chunk ${deleted})`
-        )
-      }
-    )
+    await purgeAllOrphanImages(db, 1000, (deleted, totalDeleted) => {
+      this.deletedTiles += deleted
+      console.log(
+        `Purged ${totalDeleted} orphaned images (last chunk ${deleted})`
+      )
+    })
     if (this.options.vacuum) {
       this.status = 'Vacuuming MBTiles database'
-      vacuumMbtiles(this.provider._mbtilesHandle!._db!)
+      vacuumMbtiles(db)
     }
     this.status = 'Completed'
     this.state = State.Stopped
