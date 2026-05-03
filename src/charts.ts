@@ -59,11 +59,15 @@ async function loadMBTiles() {
 // Recursively scans chartBaseDir and any non-chart subdirectories. A directory
 // is treated as a chart if it has tilemapresource.xml or metadata.json; anything
 // else is descended into so layouts like charts/<region>/<chart> work without
-// having to list every subdir in the plugin config. Symlinks are skipped and
-// the depth is bounded so a misplaced config entry can't send the scan into
-// node_modules or a symlink loop. File parsing (openMbtilesFile /
-// directoryToMapInfo) runs concurrently under a global limiter — 500 MBTiles
-// opened serially on a Pi SD card was a 5-30s startup stall.
+// having to list every subdir in the plugin config.
+// Symlinks are skipped and the depth is bounded so a misplaced config entry
+// can't send the scan into node_modules or a symlink loop. File parsing
+// (openMbtilesFile / directoryToMapInfo) runs concurrently under a global
+// limiter — 500 MBTiles opened serially on a Pi SD card was a 5-30s startup stall.
+// `.js` files are intentionally NOT scanned: providers that need
+// runtime-computed URLs (rotating bearer tokens etc.) are configured
+// declaratively via `tokenProviders` in plugin settings (see
+// src/tokenProvider.ts).
 const MAX_SCAN_DEPTH = 8
 const PARSE_CONCURRENCY = 12
 

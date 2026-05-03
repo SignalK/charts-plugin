@@ -4,8 +4,22 @@ import * as _ from 'lodash'
 import { findCharts } from './charts'
 import { apiRoutePrefix } from './constants'
 import { composeStatus, ChartPathCount } from './pluginStatus'
-import { ChartProvider, MBTilesHandle, OnlineChartProvider } from './types'
-import { ChartSeedingManager, Tile } from './chartDownloader'
+import {
+  ChartProvider,
+  MBTilesHandle,
+  OnlineChartProvider,
+  TokenProviderConfig
+} from './types'
+import {
+  ChartSeedingManager,
+  ChartDownloader,
+  JobOptions
+} from './chartDownloader'
+import { openOrCreateMbtiles } from './chartDownloaderMBTilesHelpers'
+import {
+  chartProviderFromTokenConfig,
+  validateTokenProviderConfig
+} from './tokenProvider'
 import {
   MAX_ZOOM,
   MIN_ZOOM,
@@ -27,6 +41,10 @@ interface Config {
   chartPaths: string[]
   cachePath: string
   onlineChartProviders: OnlineChartProvider[]
+  // Declarative token-based providers: token-endpoint + tile-template
+  // configs that resolve at fetch time. Replaces the auto-imported `.js`
+  // providers dropped in favour of a code-execution-free design.
+  tokenProviders?: TokenProviderConfig[]
 }
 
 interface ChartProviderApp
@@ -79,6 +97,11 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
   let reloadTimer: NodeJS.Timeout | undefined
   let activeChartPaths: string[] = []
   let activeOnlineProviders: { [key: string]: object } = {}
+  // Built from props.tokenProviders during doStartup; merged into
+  // chartProviders alongside the online providers. The ChartProvider value
+  // here holds an `_tokenProvider` handle so the proxy fetch path can call
+  // ensureFreshToken() before reading remoteUrl / headers.
+  let activeTokenProviders: { [key: string]: ChartProvider } = {}
   // Last scan result, surfaced in the config schema description so the admin
   // UI shows per-path counts when the user reopens the plugin config. Issue #8.
   let lastChartPathCounts: ChartPathCount[] = []
@@ -180,9 +203,9 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
               type: 'string',
               title: 'Format',
               default: 'png',
-              enum: ['png', 'jpg', 'pbf'],
+              enum: ['png', 'jpg', 'pbf', 'mvt', 'webp'],
               description:
-                'Format of map tiles: raster (png, jpg, etc.) / vector (pbf).'
+                'Format of map tiles: raster (png, jpg, webp, etc.) / vector (pbf, mvt).'
             },
             url: {
               type: 'string',
@@ -224,6 +247,109 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
                 title: 'Layer Name',
                 description: 'Name of layer to display',
                 type: 'string'
+              }
+            }
+          }
+        }
+      },
+      tokenProviders: {
+        type: 'array',
+        title: 'Token providers',
+        description:
+          'Declarative configs for chart providers that need a token ' +
+          'fetched from a separate URL. The token is cached for ttlSeconds ' +
+          'and templated into the tile URL/headers as {token.<field>}. ' +
+          'Use {a-b} in URLs for sharded hostnames (random integer in [a,b]).',
+        items: {
+          type: 'object',
+          title: 'Token provider',
+          required: ['identifier', 'name', 'tokenEndpoint', 'tile'],
+          properties: {
+            identifier: {
+              type: 'string',
+              title: 'Identifier',
+              description:
+                'Stable ID used in tile URLs (URL-safe; e.g. "navionics").'
+            },
+            name: { type: 'string', title: 'Name' },
+            description: { type: 'string', title: 'Description' },
+            type: {
+              type: 'string',
+              title: 'Map source type',
+              default: 'tilelayer',
+              enum: ['tilelayer', 'WMTS']
+            },
+            format: {
+              type: 'string',
+              title: 'Format',
+              default: 'png',
+              enum: ['png', 'jpg', 'webp', 'pbf', 'mvt']
+            },
+            scale: { type: 'number', title: 'Scale', default: 250000 },
+            minzoom: {
+              type: 'number',
+              title: 'Min zoom',
+              minimum: MIN_ZOOM,
+              maximum: MAX_ZOOM
+            },
+            maxzoom: {
+              type: 'number',
+              title: 'Max zoom',
+              minimum: MIN_ZOOM,
+              maximum: MAX_ZOOM
+            },
+            bounds: {
+              type: 'array',
+              title: 'Bounds [minLon, minLat, maxLon, maxLat]',
+              items: { type: 'number' },
+              minItems: 4,
+              maxItems: 4
+            },
+            tokenEndpoint: {
+              type: 'object',
+              title: 'Token endpoint',
+              required: ['url', 'ttlSeconds'],
+              properties: {
+                url: { type: 'string', title: 'URL' },
+                method: {
+                  type: 'string',
+                  title: 'Method',
+                  default: 'GET',
+                  enum: ['GET', 'POST']
+                },
+                headers: {
+                  type: 'object',
+                  title: 'Request headers',
+                  additionalProperties: { type: 'string' }
+                },
+                body: { type: 'string', title: 'Request body' },
+                ttlSeconds: {
+                  type: 'number',
+                  title: 'TTL (seconds)',
+                  description:
+                    'How long a fetched token is reused before re-fetching.',
+                  minimum: 1
+                }
+              }
+            },
+            tile: {
+              type: 'object',
+              title: 'Tile request template',
+              required: ['url'],
+              properties: {
+                url: {
+                  type: 'string',
+                  title: 'URL template',
+                  description:
+                    'Tile URL with {z}/{x}/{y}, {token.<field>}, and {a-b}.'
+                },
+                headers: {
+                  type: 'object',
+                  title: 'Request headers',
+                  description:
+                    'Header template (values may reference {token.<field>}).',
+                  additionalProperties: { type: 'string' }
+                }
               }
             }
           }
@@ -312,10 +438,32 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
       }
       activeOnlineProviders[provider.identifier] = provider
     }
+
+    // Build token providers. A bad config entry shouldn't take the whole
+    // plugin out — log and skip the offender so the rest still load.
+    activeTokenProviders = {}
+    for (let i = 0; i < (props.tokenProviders ?? []).length; i++) {
+      const raw = (props.tokenProviders ?? [])[i]
+      try {
+        const cfg = validateTokenProviderConfig(raw, i)
+        const provider = chartProviderFromTokenConfig(cfg)
+        if (activeTokenProviders[provider.identifier]) {
+          app.debug(
+            `Duplicate token provider identifier "${provider.identifier}"; ` +
+              `the later entry wins. Rename one to avoid the collision.`
+          )
+        }
+        activeTokenProviders[provider.identifier] = provider
+      } catch (err) {
+        console.warn(`Skipping ${(err as Error).message}`)
+      }
+    }
+
     app.debug(
       `Start charts plugin. Chart paths: ${activeChartPaths.join(
         ', '
-      )}, online charts: ${Object.keys(activeOnlineProviders).length}`
+      )}, online charts: ${Object.keys(activeOnlineProviders).length}, ` +
+        `token providers: ${Object.keys(activeTokenProviders).length}`
     )
 
     // Routes and the v2 provider registration are idempotent — Signal K can
@@ -429,6 +577,41 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
       }
       chartProviders[id] = provider as ChartProvider
     }
+    // Token providers (declarative token-rotating configs) merge in last
+    // and win over a colliding online or local entry: the admin took the
+    // explicit step of configuring one, so a stale auto-discovered chart
+    // shouldn't shadow it.
+    for (const [id, provider] of Object.entries(activeTokenProviders)) {
+      if (chartProviders[id]) {
+        app.debug(
+          `Token provider identifier "${id}" collides with another ` +
+            `provider; the token provider wins.`
+        )
+      }
+      chartProviders[id] = provider
+    }
+
+    // Open / create an mbtiles cache file for every proxy provider so downloaded
+    // tiles can be persisted in the standard mbtiles format alongside the flat
+    // filesystem layout. Failure to open doesn't take the provider out — tile
+    // requests fall back to the existing flat-file cache path.
+    for (const provider of Object.values(chartProviders)) {
+      if (provider.proxy === true) {
+        try {
+          provider._mbtilesHandle = await openOrCreateMbtiles(
+            path.join(cachePath, `${provider.identifier}.mbtiles_`),
+            provider
+          )
+        } catch (err) {
+          app.debug(
+            `Could not open mbtiles cache for ${provider.identifier}: ${
+              (err as Error).message
+            }`
+          )
+        }
+      }
+    }
+
     buildSanitizedCache()
     app.setPluginStatus(
       composeStatus(perPath, Object.keys(activeOnlineProviders).length)
@@ -459,6 +642,13 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
     [key: string]: ChartProvider
   }) => {
     for (const old of Object.values(oldSet)) {
+      // Skip providers that were only in the old set if they were proxy providers
+      //  we want to keep serving tiles from their existing mbtiles handle until
+      // the new one is ready, and a missing handle means the new config failed
+      // to open the file, so there's no new handle to wait for.
+      if (old.proxy === true) {
+        continue
+      }
       if (old?._mbtilesHandle) {
         const handle = old._mbtilesHandle
         setTimeout(() => closeMbtilesHandle(handle), MBTILES_CLOSE_DELAY_MS)
@@ -591,6 +781,43 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
       }
     )
 
+    app.post(`${chartTilesPath}/cache/regions`, (req, res) => {
+      const geojson = req.body
+      const p = path.join(app.getDataDirPath(), 'regions.json')
+      fs.writeFileSync(p, JSON.stringify(geojson, null, 2))
+      // TODO: return json with signalk response format
+      return res.send({ status: 'ok' })
+    })
+
+    app.get(`${chartTilesPath}/cache/regions`, (_req, res) => {
+      const p = path.join(app.getDataDirPath(), 'regions.json')
+      try {
+        const raw = fs.readFileSync(p, 'utf8')
+        const data = JSON.parse(raw)
+        return res.json(data)
+      } catch (_e) {
+        return res.json({ type: 'FeatureCollection', features: [] })
+      }
+    })
+
+    app.get(`${chartTilesPath}/cache/stats`, (_req, res) => {
+      const data = ChartDownloader.getStatistics()
+      return res.json(data)
+    })
+
+    // Placeholder for the legacy-PNG-cache → mbtiles migration endpoint.
+    // Returns 501 until the migration tool lands so callers can detect that
+    // the feature isn't wired up yet.
+    app.post(
+      `${chartTilesPath}/cache/:identifier/migrate`,
+      async (req: Request, res: Response) => {
+        app.debug(
+          `migrate endpoint hit for ${req.params.identifier}, not implemented yet`
+        )
+        return res.status(501).send('Migration not implemented yet')
+      }
+    )
+
     app.post(
       `${chartTilesPath}/cache/:identifier`,
       async (req: Request<{ identifier: string }>, res: Response) => {
@@ -598,17 +825,20 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
         if (!identifier) {
           return res.sendStatus(404)
         }
-        const { regionGUID, tile, bbox, maxZoom } = req.body as {
-          regionGUID?: string
-          tile?: Tile // query params come in as strings
-          bbox?: {
-            minLon: number
-            minLat: number
-            maxLon: number
-            maxLat: number
+        const { feature, bbox, minZoom, maxZoom, action, options } =
+          req.body as {
+            feature?: GeoJSON.Feature<GeoJSON.Geometry>
+            bbox?: {
+              minLon: number
+              minLat: number
+              maxLon: number
+              maxLat: number
+            }
+            minZoom?: string
+            maxZoom?: string
+            action?: string
+            options?: JobOptions
           }
-          maxZoom?: string
-        }
         const provider = chartProviders[identifier]
         if (!provider) {
           return res.status(404).send('Provider not found')
@@ -616,15 +846,17 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
         if (!maxZoom) {
           return res.status(400).send('maxZoom parameter is required')
         }
-        if (!regionGUID && !bbox && !tile) {
-          return res
-            .status(400)
-            .send('Request must include regionGUID, bbox, or tile')
+        if (!feature && !bbox) {
+          return res.status(400).send('Request must include feature or bbox')
         }
+        const minZoomParsed = parseInt(minZoom ?? '1')
         const maxZoomParsed = parseInt(maxZoom)
-        const zoomError = validateMaxZoom(maxZoomParsed)
-        if (zoomError) {
-          return res.status(400).send(zoomError)
+        const maxZoomError = validateMaxZoom(maxZoomParsed)
+        if (maxZoomError) {
+          return res.status(400).send(maxZoomError)
+        }
+        if (Number.isFinite(minZoomParsed) && validateMaxZoom(minZoomParsed)) {
+          return res.status(400).send(`Invalid minZoom ${minZoomParsed}`)
         }
         if (bbox) {
           const bboxError = validateBBox(bbox)
@@ -632,24 +864,23 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
             return res.status(400).send(bboxError)
           }
         }
-        if (tile) {
-          const tileError = validateTileCoords(tile.z, tile.x, tile.y)
-          if (tileError) {
-            return res.status(400).send(tileError)
-          }
-        }
         try {
           const job = await ChartSeedingManager.createJob(
-            app.resourcesApi,
             cachePath,
             provider,
+            options ?? { refetch: false, mbtiles: false, vacuum: false },
+            minZoomParsed,
             maxZoomParsed,
-            regionGUID,
+            feature,
             bbox
               ? [bbox.minLon, bbox.minLat, bbox.maxLon, bbox.maxLat]
-              : undefined,
-            tile
+              : undefined
           )
+          if (action === 'start') {
+            job.seedCache()
+          } else if (action === 'delete') {
+            job.deleteCache()
+          }
           // Job is registered and its tile set is known, but nothing has been
           // downloaded yet — the caller starts it with
           // POST /cache/jobs/:id { action: 'start' }.
@@ -695,6 +926,9 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
         } else if (action === 'delete') {
           job.deleteCache()
         } else if (action === 'remove') {
+          // Cancel first so an in-flight seed doesn't mutate the entry
+          // after we drop it from the registry.
+          job.cancelJob()
           delete ChartSeedingManager.ActiveJobs[parsedId]
         } else {
           return res.status(400).send(`Unknown action: ${action}`)
