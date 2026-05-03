@@ -1,4 +1,5 @@
 import type { OutgoingHttpHeaders } from 'http'
+import type { DatabaseSync } from 'node:sqlite'
 
 type MapSourceType =
   | 'tilelayer'
@@ -12,6 +13,19 @@ type MapSourceType =
 // CJS and untyped, so we describe the call sites rather than re-declaring the
 // full module surface.
 export interface MBTilesHandle {
+  putTile: (
+    z: number,
+    x: number,
+    y: number,
+    tile: Buffer,
+    callback: (err: Error | null) => void
+  ) => void
+  startWriting: (callback: (err: Error | null) => void) => void
+  putInfo: (
+    info: MBTilesMetadata,
+    callback: (err: Error | null) => void
+  ) => void
+
   getTile: (
     z: number,
     x: number,
@@ -29,6 +43,10 @@ export interface MBTilesHandle {
   // MBTiles inherits from EventEmitter. We only need 'error' so an unhandled
   // event doesn't bring down the node process.
   on: (event: 'error', listener: (err: Error) => void) => MBTilesHandle
+
+  // Internal node:sqlite database handle exposed by @signalk/mbtiles for
+  // advanced operations (tile cache writes, vacuum, bulk delete).
+  _db?: DatabaseSync
 }
 
 // MBTiles metadata rows relevant to the plugin. `bounds` is commonly a

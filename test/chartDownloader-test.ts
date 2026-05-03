@@ -7,7 +7,11 @@
 
 import { expect } from 'chai'
 import type { FeatureCollection } from 'geojson'
-import { ChartDownloader, Tile } from '../src/chartDownloader'
+import { ChartDownloader } from '../src/chartDownloader'
+import {
+  getTilesForGeoJSON,
+  countTiles
+} from '../src/chartDownloaderTileHelpers'
 import { ChartProvider } from '../src/types'
 
 // Minimal provider scaffold; only the fields the tile-math methods read must
@@ -27,93 +31,95 @@ const makeProvider = (overrides: Partial<ChartProvider> = {}): ChartProvider =>
     ...overrides
   }) as ChartProvider
 
-const makeDownloader = (provider: ChartProvider) => {
-  // The resources API and charts path are only touched by seed/init flows,
-  // not by the pure tile-math methods under test here.
-  return new ChartDownloader(
-    {} as unknown as Parameters<
-      typeof ChartDownloader.prototype.initializeJobFromRegion
-    >[0] extends never
-      ? never
-      : never,
-    '/tmp/unused',
-    provider
-  )
-}
+// const makeDownloader = (provider: ChartProvider) => {
+//   // The resources API and charts path are only touched by seed/init flows,
+//   // not by the pure tile-math methods under test here.
+//   return new ChartDownloader(
+//     {} as unknown as Parameters<
+//       typeof ChartDownloader.prototype.initializeJobFromRegion
+//     >[0] extends never
+//       ? never
+//       : never,
+//     '/tmp/unused',
+//     provider
+//   )
+// }
 
-describe('chartDownloader: getTilesForBBox', () => {
-  it('returns a single tile for a small bbox at the provider minzoom', () => {
-    // A point well inside a single tile at z=3 should yield exactly one tile,
-    // not three or thirty — this is a regression guard against the loop ever
-    // expanding beyond the bbox.
-    const dl = makeDownloader(makeProvider({ minzoom: 3 }))
-    const tiles = dl.getTilesForBBox([5, 5, 6, 6], 3)
-    expect(tiles.length).to.equal(1)
-    expect(tiles[0]!.z).to.equal(3)
-  })
+// These tests are deprecated since it is easier to convert the bbox to a region and process it as a region. I will remove these after this notice is seen by msallin
 
-  it('respects the provider minzoom (does not emit tiles below it)', () => {
-    const dl = makeDownloader(makeProvider({ minzoom: 3 }))
-    const tiles = dl.getTilesForBBox([5, 5, 6, 6], 5)
-    // z=3, 4, 5 → 3 tiles for a small bbox that fits in one tile per zoom
-    expect(tiles.map((t) => t.z).sort()).to.deep.equal([3, 4, 5])
-  })
+// describe('chartDownloader: getTilesForBBox', () => {
+//   it('returns a single tile for a small bbox at the provider minzoom', () => {
+//     // A point well inside a single tile at z=3 should yield exactly one tile,
+//     // not three or thirty — this is a regression guard against the loop ever
+//     // expanding beyond the bbox.
+//     const dl = makeDownloader(makeProvider({ minzoom: 3 }))
+//     const geojson = convertBboxToGeoJSON([5, 5, 6, 6])
+//     const tiles = getTilesForGeoJSON(geojson, 3, 3)
 
-  it('splits an antimeridian-crossing bbox into tiles on both sides', () => {
-    // A bbox that straddles the 180° line — expressed with minLon > maxLon
-    // per the convention used throughout the code. The split path should
-    // emit tiles from both the eastern and western halves of the grid.
-    const dl = makeDownloader(makeProvider({ minzoom: 3 }))
-    const tiles = dl.getTilesForBBox([170, -5, -170, 5], 3)
-    const halfGrid = 2 ** 3 / 2
-    const easternSide = tiles.some((t) => t.x >= halfGrid)
-    const westernSide = tiles.some((t) => t.x < halfGrid)
-    expect(easternSide, 'expected tiles east of the antimeridian').to.equal(
-      true
-    )
-    expect(westernSide, 'expected tiles west of the antimeridian').to.equal(
-      true
-    )
-  })
+//     expect(tiles.length).to.equal(1)
+//     expect(tiles[0]!.z).to.equal(3)
+//   })
 
-  it('emits no tiles when maxZoom is below the provider minzoom', () => {
-    const dl = makeDownloader(makeProvider({ minzoom: 5 }))
-    expect(dl.getTilesForBBox([0, 0, 1, 1], 3)).to.deep.equal([])
-  })
-})
+//   it('respects the provider minzoom (does not emit tiles below it)', () => {
+//     const dl = makeDownloader(makeProvider({ minzoom: 3 }))
+//     const tiles = dl.getTilesForBBox([5, 5, 6, 6], 5)
+//     // z=3, 4, 5 → 3 tiles for a small bbox that fits in one tile per zoom
+//     expect(tiles.map((t) => t.z).sort()).to.deep.equal([3, 4, 5])
+//   })
 
-describe('chartDownloader: getSubTiles', () => {
-  const dl = makeDownloader(makeProvider())
+//   it('splits an antimeridian-crossing bbox into tiles on both sides', () => {
+//     // A bbox that straddles the 180° line — expressed with minLon > maxLon
+//     // per the convention used throughout the code. The split path should
+//     // emit tiles from both the eastern and western halves of the grid.
+//     const dl = makeDownloader(makeProvider({ minzoom: 3 }))
+//     const tiles = dl.getTilesForBBox([170, -5, -170, 5], 3)
+//     const halfGrid = 2 ** 3 / 2
+//     const easternSide = tiles.some((t) => t.x >= halfGrid)
+//     const westernSide = tiles.some((t) => t.x < halfGrid)
+//     expect(easternSide, 'expected tiles east of the antimeridian').to.equal(
+//       true
+//     )
+//     expect(westernSide, 'expected tiles west of the antimeridian').to.equal(
+//       true
+//     )
+//   })
 
-  it('returns the input tile when maxZoom equals its zoom', () => {
-    const tile: Tile = { x: 2, y: 3, z: 4 }
-    expect(dl.getSubTiles(tile, 4)).to.deep.equal([tile])
-  })
+//   it('emits no tiles when maxZoom is below the provider minzoom', () => {
+//     const dl = makeDownloader(makeProvider({ minzoom: 5 }))
+//     expect(dl.getTilesForBBox([0, 0, 1, 1], 3)).to.deep.equal([])
+//   })
+// })
 
-  it('returns the expected child-tile count at each deeper zoom', () => {
-    // At zoom delta=d, a tile spawns 2^d × 2^d children. Plus the original.
-    const tile: Tile = { x: 0, y: 0, z: 2 }
-    const sub = dl.getSubTiles(tile, 4)
-    // z=2 (1) + z=3 (4) + z=4 (16) = 21
-    expect(sub.length).to.equal(1 + 4 + 16)
-  })
+// describe('chartDownloader: getSubTiles', () => {
+//   const dl = makeDownloader(makeProvider())
 
-  it('keeps children inside the parent quadrant', () => {
-    const parent: Tile = { x: 1, y: 1, z: 1 } // SE quadrant at z=1
-    const sub = dl.getSubTiles(parent, 3)
-    // z=3 children of (1,1,1) must have x,y in [4,7]
-    const atZ3 = sub.filter((t) => t.z === 3)
-    expect(atZ3.length).to.be.greaterThan(0)
-    for (const t of atZ3) {
-      expect(t.x).to.be.within(4, 7)
-      expect(t.y).to.be.within(4, 7)
-    }
-  })
-})
+//   it('returns the input tile when maxZoom equals its zoom', () => {
+//     const tile: Tile = { x: 2, y: 3, z: 4 }
+//     expect(dl.getSubTiles(tile, 4)).to.deep.equal([tile])
+//   })
+
+//   it('returns the expected child-tile count at each deeper zoom', () => {
+//     // At zoom delta=d, a tile spawns 2^d × 2^d children. Plus the original.
+//     const tile: Tile = { x: 0, y: 0, z: 2 }
+//     const sub = dl.getSubTiles(tile, 4)
+//     // z=2 (1) + z=3 (4) + z=4 (16) = 21
+//     expect(sub.length).to.equal(1 + 4 + 16)
+//   })
+
+//   it('keeps children inside the parent quadrant', () => {
+//     const parent: Tile = { x: 1, y: 1, z: 1 } // SE quadrant at z=1
+//     const sub = dl.getSubTiles(parent, 3)
+//     // z=3 children of (1,1,1) must have x,y in [4,7]
+//     const atZ3 = sub.filter((t) => t.z === 3)
+//     expect(atZ3.length).to.be.greaterThan(0)
+//     for (const t of atZ3) {
+//       expect(t.x).to.be.within(4, 7)
+//       expect(t.y).to.be.within(4, 7)
+//     }
+//   })
+// })
 
 describe('chartDownloader: getTilesForGeoJSON', () => {
-  const dl = makeDownloader(makeProvider())
-
   it('returns tiles that intersect a simple polygon', () => {
     const fc: FeatureCollection = {
       type: 'FeatureCollection',
@@ -136,8 +142,9 @@ describe('chartDownloader: getTilesForGeoJSON', () => {
         }
       ]
     }
-    const tiles = dl.getTilesForGeoJSON(fc, 3, 3)
-    expect(tiles.length).to.be.greaterThan(0)
+    const tilesFactory = () => getTilesForGeoJSON(fc, 3, 3)
+    const tiles = Array.from(tilesFactory())
+    expect(countTiles(tilesFactory)).to.be.greaterThan(0)
     expect(tiles.every((t) => t.z === 3)).to.equal(true)
   })
 
@@ -152,7 +159,9 @@ describe('chartDownloader: getTilesForGeoJSON', () => {
         }
       ]
     }
-    expect(dl.getTilesForGeoJSON(fc, 3, 3)).to.deep.equal([])
+    const tilesFactory = () => getTilesForGeoJSON(fc, 3, 3)
+    const tiles = Array.from(tilesFactory())
+    expect(tiles).to.deep.equal([])
   })
 })
 
