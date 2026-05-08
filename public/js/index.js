@@ -403,7 +403,6 @@ async function createJob(action) {
     body.action = action
     body.options = { refetch: refetch, mbtiles: mbtiles, vacuum: vacuum }
 
-    console.log('Creating job with body:', body)
     const resp = await fetch(`/signalk/chart-tiles/cache/${chart}`, {
       method: 'POST',
       headers: {
@@ -465,9 +464,11 @@ function setupRegions() {
     if (!activeRegionLayer) return
 
     const p = activeRegionLayer.feature.properties
-    p.name = regionName.value
+    // Explicit DOM lookup rather than relying on the legacy
+    // id-becomes-window-property behaviour, which is non-strict-mode-only
+    // and a frequent source of "works in Chrome, breaks in tests" bugs.
+    p.name = document.getElementById('regionName').value
     saveRegions()
-    
   }
 }
 
@@ -570,7 +571,7 @@ function openRegionModal(layer) {
 
   const p = layer.feature.properties
 
-  regionName.value = p.name || p.Name || ''
+  document.getElementById('regionName').value = p.name || p.Name || ''
   const regionModal = document.getElementById('regionModal')
   regionModal.classList.remove('hidden')
 
