@@ -4,6 +4,7 @@ import type { BBox } from 'geojson'
 import checkDiskSpace from 'check-disk-space'
 import { ChartProvider, MBTilesHandle } from './types'
 import { lonLatToMercator, tileToBBox } from './projection'
+import { exportMbtilesPath, EXPORTS_DIR } from './cacheLayout'
 
 // All DB-touching helpers (delete / purge / vacuum / region-tile listing) need
 // the raw node:sqlite handle exposed by @signalk/mbtiles. Reaching through
@@ -269,10 +270,18 @@ export class ChartDownloader {
         .replace(/_+/g, '_') // collapse repeats
         .replace(/^_+|_+$/g, '') // trim underscores
         .slice(0, 100) // limit length
-      const baseDir = path.resolve(this.cachePath, 'mbtiles')
+      // Snapshot exports go to ${cachePath}/exports/, which is excluded from
+      // the chart scanner — the file is a build artifact for offline transfer
+      // (USB stick to another SK server), not a chart the running plugin
+      // serves. Re-running the job overwrites the file freely; no scanner
+      // handle holds it open.
+      const baseDir = path.resolve(this.cachePath, EXPORTS_DIR)
       const filePath = path.resolve(
-        baseDir,
-        `${safeRegionName}_${this.provider.identifier}.mbtiles`
+        exportMbtilesPath(
+          this.cachePath,
+          safeRegionName,
+          this.provider.identifier
+        )
       )
 
       if (!filePath.startsWith(baseDir)) {

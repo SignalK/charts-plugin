@@ -20,6 +20,7 @@ import {
   chartProviderFromTokenConfig,
   validateTokenProviderConfig
 } from './tokenProvider'
+import { migrateLegacyCacheLayout, workingMbtilesPath } from './cacheLayout'
 import {
   MAX_ZOOM,
   MIN_ZOOM,
@@ -425,6 +426,9 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
     if (cachePath !== defaultChartsPath) {
       await ensureDirectoryExists(cachePath)
     }
+    // Move pre-restructure files into the new layout. Idempotent and
+    // failure-tolerant: a file we can't move is logged and the rest carry on.
+    await migrateLegacyCacheLayout(cachePath, app)
 
     activeOnlineProviders = {}
     for (const data of props.onlineChartProviders ?? []) {
@@ -591,15 +595,16 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
       chartProviders[id] = provider
     }
 
-    // Open / create an mbtiles cache file for every proxy provider so downloaded
-    // tiles can be persisted in the standard mbtiles format alongside the flat
-    // filesystem layout. Failure to open doesn't take the provider out — tile
-    // requests fall back to the existing flat-file cache path.
+    // Open / create the working mbtiles cache for every proxy provider.
+    // Path lives under `.working/<id>/cache.mbtiles` (excluded from the
+    // scanner so it isn't read-opened concurrently with our writes).
+    // Failure to open doesn't take the provider out — tile requests will
+    // just always go remote.
     for (const provider of Object.values(chartProviders)) {
       if (provider.proxy === true) {
         try {
           provider._mbtilesHandle = await openOrCreateMbtiles(
-            path.join(cachePath, `${provider.identifier}.mbtiles_`),
+            workingMbtilesPath(cachePath, provider.identifier),
             provider
           )
         } catch (err) {
