@@ -20,7 +20,11 @@ import {
   chartProviderFromTokenConfig,
   validateTokenProviderConfig
 } from './tokenProvider'
-import { migrateLegacyCacheLayout, workingMbtilesPath } from './cacheLayout'
+import {
+  migrateLegacyCacheLayout,
+  migrateLegacyTileCache,
+  workingMbtilesPath
+} from './cacheLayout'
 import {
   MAX_ZOOM,
   MIN_ZOOM,
@@ -810,16 +814,66 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
       return res.json(data)
     })
 
-    // Placeholder for the legacy-PNG-cache → mbtiles migration endpoint.
-    // Returns 501 until the migration tool lands so callers can detect that
-    // the feature isn't wired up yet.
+    // Migrate the pre-PR per-file PNG cache for a provider into its working
+    // mbtiles. Body fields (all optional):
+    //   sourceName    legacy directory name (default: provider.name)
+    //   deleteSource  remove tile files after successful insert
+    // Returns 202 immediately and runs the walk in the background — large
+    // caches (>100k tiles) can take minutes and would time out a sync
+    // response. The migration is idempotent so the admin can re-run if
+    // they want to confirm completion.
     app.post(
       `${chartTilesPath}/cache/:identifier/migrate`,
-      async (req: Request, res: Response) => {
-        app.debug(
-          `migrate endpoint hit for ${req.params.identifier}, not implemented yet`
-        )
-        return res.status(501).send('Migration not implemented yet')
+      async (req: Request<{ identifier: string }>, res: Response) => {
+        const { identifier } = req.params
+        const provider = chartProviders[identifier]
+        if (!provider) return res.status(404).send('Provider not found')
+        if (!provider._mbtilesHandle) {
+          return res
+            .status(400)
+            .send(
+              `Provider "${identifier}" has no working mbtiles cache. ` +
+                `Configure proxy:true and ensure cachePath is writable.`
+            )
+        }
+        const body = (req.body ?? {}) as {
+          sourceName?: string
+          deleteSource?: boolean
+        }
+        const sourceName =
+          typeof body.sourceName === 'string' && body.sourceName.length > 0
+            ? body.sourceName
+            : provider.name
+        const legacyDir = path.resolve(cachePath, sourceName)
+        // path.resolve guards against `../` escape: the resolved path must
+        // sit under cachePath, otherwise sourceName tried to traverse out.
+        if (!legacyDir.startsWith(path.resolve(cachePath))) {
+          return res.status(400).send('sourceName must not escape cachePath')
+        }
+        const handle = provider._mbtilesHandle
+        const deleteSource = body.deleteSource === true
+        // Fire and forget: log on completion / failure. Request returns
+        // immediately so a 30-minute migration doesn't tie up the HTTP
+        // socket.
+        migrateLegacyTileCache(legacyDir, handle, { deleteSource })
+          .then((counts) => {
+            app.debug(
+              `Legacy migration for "${identifier}" done: ` +
+                `${counts.migrated} migrated, ${counts.skipped} skipped, ` +
+                `${counts.failed} failed`
+            )
+          })
+          .catch((err: Error) => {
+            app.debug(
+              `Legacy migration for "${identifier}" failed: ${err.message}`
+            )
+          })
+        return res.status(202).json({
+          status: 'started',
+          provider: identifier,
+          legacyDir,
+          deleteSource
+        })
       }
     )
 

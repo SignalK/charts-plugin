@@ -18,10 +18,63 @@ import {
   WORKING_DIR,
   exportMbtilesPath,
   migrateLegacyCacheLayout,
+  migrateLegacyTileCache,
   workingMbtilesPath
 } from '../src/cacheLayout'
+import type { MBTilesHandle } from '../src/types'
 
 const silentApp = { debug: (_msg: string) => {} }
+
+// In-memory fake of the @signalk/mbtiles handle that captures putTile calls.
+// Just enough surface for migrateLegacyTileCache; full MBTilesHandle has
+// other methods we don't need to exercise here.
+const makeFakeHandle = () => {
+  const tiles: Array<{ z: number; x: number; y: number; size: number }> = []
+  let putTileFailureSpec: { x: number; y: number; z: number } | null = null
+  const handle = {
+    tiles,
+    failNextPutTileMatching(spec: { x: number; y: number; z: number }) {
+      putTileFailureSpec = spec
+    },
+    putTile(
+      z: number,
+      x: number,
+      y: number,
+      buffer: Buffer,
+      cb: (err: Error | null) => void
+    ) {
+      if (
+        putTileFailureSpec &&
+        putTileFailureSpec.x === x &&
+        putTileFailureSpec.y === y &&
+        putTileFailureSpec.z === z
+      ) {
+        putTileFailureSpec = null
+        return cb(new Error('simulated putTile failure'))
+      }
+      tiles.push({ z, x, y, size: buffer.length })
+      cb(null)
+    }
+  }
+  return handle as unknown as MBTilesHandle & {
+    tiles: typeof tiles
+    failNextPutTileMatching: (spec: { x: number; y: number; z: number }) => void
+  }
+}
+
+const writeTile = (
+  root: string,
+  z: number,
+  x: number,
+  y: number,
+  ext = 'png'
+) => {
+  const dir = path.join(root, String(z), String(x))
+  fs.mkdirSync(dir, { recursive: true })
+  const file = path.join(dir, `${y}.${ext}`)
+  fs.writeFileSync(file, Buffer.from(`tile-${z}-${x}-${y}`))
+  return file
+}
 
 const mkTmp = (): string =>
   fs.mkdtempSync(path.join(os.tmpdir(), 'charts-cache-layout-'))
@@ -148,6 +201,130 @@ describe('cacheLayout: migrateLegacyCacheLayout', () => {
       // tolerance is the contract.
       expect(fs.existsSync(a)).to.equal(true)
       expect(fs.existsSync(b)).to.equal(true)
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('cacheLayout: migrateLegacyTileCache', () => {
+  it('returns zeros when the legacy dir does not exist', async () => {
+    const tmp = mkTmp()
+    try {
+      const handle = makeFakeHandle()
+      const counts = await migrateLegacyTileCache(
+        path.join(tmp, 'nope'),
+        handle
+      )
+      expect(counts).to.deep.equal({ migrated: 0, skipped: 0, failed: 0 })
+      expect(handle.tiles).to.have.lengthOf(0)
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  it('inserts each tile into mbtiles via putTile', async () => {
+    const tmp = mkTmp()
+    try {
+      const root = path.join(tmp, 'OpenSeaMap')
+      writeTile(root, 5, 10, 20)
+      writeTile(root, 5, 10, 21)
+      writeTile(root, 6, 21, 42)
+
+      const handle = makeFakeHandle()
+      const counts = await migrateLegacyTileCache(root, handle)
+
+      expect(counts.migrated).to.equal(3)
+      expect(counts.failed).to.equal(0)
+      expect(handle.tiles).to.have.deep.members([
+        { z: 5, x: 10, y: 20, size: Buffer.from('tile-5-10-20').length },
+        { z: 5, x: 10, y: 21, size: Buffer.from('tile-5-10-21').length },
+        { z: 6, x: 21, y: 42, size: Buffer.from('tile-6-21-42').length }
+      ])
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  it('counts non-matching files as skipped, not failed', async () => {
+    const tmp = mkTmp()
+    try {
+      const root = path.join(tmp, 'osm')
+      writeTile(root, 5, 10, 20)
+      // Stray non-numeric subdir at z-level
+      fs.mkdirSync(path.join(root, 'README'))
+      // Stray non-tile file at y-level
+      fs.mkdirSync(path.join(root, '5', 'a'), { recursive: true })
+      fs.writeFileSync(path.join(root, '5', 'a', 'note.txt'), 'hi')
+
+      const handle = makeFakeHandle()
+      const counts = await migrateLegacyTileCache(root, handle)
+
+      expect(counts.migrated).to.equal(1)
+      expect(counts.skipped).to.be.greaterThan(0)
+      expect(counts.failed).to.equal(0)
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  it('deleteSource removes successfully migrated files', async () => {
+    const tmp = mkTmp()
+    try {
+      const root = path.join(tmp, 'osm')
+      const f1 = writeTile(root, 5, 10, 20)
+      const f2 = writeTile(root, 5, 10, 21)
+
+      const handle = makeFakeHandle()
+      const counts = await migrateLegacyTileCache(root, handle, {
+        deleteSource: true
+      })
+      expect(counts.migrated).to.equal(2)
+      expect(fs.existsSync(f1)).to.equal(false)
+      expect(fs.existsSync(f2)).to.equal(false)
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  it('counts a putTile failure as failed and continues with the rest', async () => {
+    const tmp = mkTmp()
+    try {
+      const root = path.join(tmp, 'osm')
+      writeTile(root, 5, 10, 20)
+      writeTile(root, 5, 10, 21)
+      writeTile(root, 5, 10, 22)
+
+      const handle = makeFakeHandle()
+      handle.failNextPutTileMatching({ z: 5, x: 10, y: 21 })
+      const counts = await migrateLegacyTileCache(root, handle, {
+        deleteSource: true
+      })
+      expect(counts.migrated).to.equal(2)
+      expect(counts.failed).to.equal(1)
+      // The failed file's source must NOT be deleted (deleteSource only
+      // applies after a successful putTile). Otherwise we'd lose data the
+      // mbtiles never accepted.
+      expect(fs.existsSync(path.join(root, '5', '10', '21.png'))).to.equal(true)
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  it('accepts jpg / jpeg / webp / pbf / mvt extensions', async () => {
+    const tmp = mkTmp()
+    try {
+      const root = path.join(tmp, 'osm')
+      writeTile(root, 5, 0, 0, 'png')
+      writeTile(root, 5, 0, 1, 'jpg')
+      writeTile(root, 5, 0, 2, 'jpeg')
+      writeTile(root, 5, 0, 3, 'webp')
+      writeTile(root, 5, 0, 4, 'pbf')
+      writeTile(root, 5, 0, 5, 'mvt')
+
+      const handle = makeFakeHandle()
+      const counts = await migrateLegacyTileCache(root, handle)
+      expect(counts.migrated).to.equal(6)
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true })
     }
