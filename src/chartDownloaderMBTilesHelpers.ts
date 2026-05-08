@@ -80,6 +80,16 @@ export function* getMBTilesForPolygon(
   zoomMin = 1,
   zoomMax = 14
 ): Generator<Tile, void, undefined> {
+  // Prepared statement is identical across the per-feature / per-zoom loops;
+  // the bind values change but the SQL text doesn't. Hoisted so we don't
+  // pay sqlite's prepare cost once per zoom level (~14× per call before).
+  const stmt = db.prepare(`
+    SELECT tile_column, tile_row
+    FROM map
+    WHERE zoom_level = ?
+      AND tile_column BETWEEN ? AND ?
+      AND tile_row BETWEEN ? AND ?
+  `)
   for (const feature of geojson.features) {
     if (
       feature.geometry.type !== 'Polygon' &&
@@ -96,14 +106,6 @@ export function* getMBTilesForPolygon(
 
       const tmsMinY = xyzToTmsY(z, maxY)
       const tmsMaxY = xyzToTmsY(z, minY)
-
-      const stmt = db.prepare(`
-        SELECT tile_column, tile_row
-        FROM map
-        WHERE zoom_level = ?
-          AND tile_column BETWEEN ? AND ?
-          AND tile_row BETWEEN ? AND ?
-      `)
 
       const rows = stmt.all(z, minX, maxX, tmsMinY, tmsMaxY) as TileRow[]
 
@@ -147,21 +149,37 @@ export async function deleteTilesInChunks(
   chunkSize = 100,
   onProgress?: (done: number) => void
 ): Promise<void> {
-  // const db = _mbtiles._db
   let deleted = 0
+  // Prepared statement reused across all chunks; SQL text is identical, only
+  // bind values change. Was being re-prepared per chunk before.
+  const stmt = db.prepare(`
+    DELETE FROM map
+    WHERE zoom_level = ?
+      AND tile_column = ?
+      AND tile_row = ?
+  `)
   let chunk = await takeChunk(tiles, chunkSize)
   while (chunk.length > 0) {
     db.exec('BEGIN TRANSACTION')
-    const stmt = db.prepare(`
-        DELETE FROM map
-        WHERE zoom_level = ?
-          AND tile_column = ?
-          AND tile_row = ?
-      `)
-    for (const { z, x, y } of chunk) {
-      stmt.run(z, x, xyzToTmsY(z, y))
+    try {
+      for (const { z, x, y } of chunk) {
+        stmt.run(z, x, xyzToTmsY(z, y))
+      }
+      db.exec('COMMIT')
+    } catch (err) {
+      // Abort the open transaction so SQLite isn't left in an
+      // implicit-rollback state holding the write lock for the rest of
+      // the run. Rethrow so the caller knows the chunk failed; partial
+      // mid-chunk deletes are reverted.
+      try {
+        db.exec('ROLLBACK')
+      } catch {
+        // ROLLBACK can race a SQLite-internal abort and throw "no
+        // transaction is active". Safe to ignore: the transaction is
+        // gone either way, and surfacing this would mask the real err.
+      }
+      throw err
     }
-    db.exec('COMMIT')
 
     deleted += chunk.length
     onProgress?.(deleted)

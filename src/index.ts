@@ -222,7 +222,7 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
               type: 'boolean',
               title: 'Proxy through signalk server',
               description:
-                'Create a proxy to serve remote tiles and cache fetched tiles from the remote server, to serve them locally on subsequent requests. Use webapp to configure seeding jobs to prefetch tiles to local cache.',
+                'Create a proxy to serve remote tiles and cache fetched tiles from the remote server, to serve them locally on subsequent requests. Use webapp to configure seeding jobs to prefetch tiles to local cache. Only meaningful for tilelayer / WMS / WMTS providers; mapstyleJSON and tileJSON providers describe style/source manifests and have no per-tile cache to seed.',
               default: false
             },
             headers: {
@@ -979,6 +979,21 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
           return res.status(400).send('action parameter is required')
         }
         if (action === 'start') {
+          // Reject restart of jobs that already ran. seedCache itself is a
+          // no-op while Running, but a Completed (or Cancelled) job would
+          // happily reset its counters and run again — which the UI hides
+          // but the endpoint used to accept. The admin should remove the
+          // completed job and create a fresh one to refresh tiles, so the
+          // intent is explicit and doesn't get lost in a counter reset.
+          // Issue #11.
+          if (job.info().status !== 'Idle') {
+            return res
+              .status(409)
+              .send(
+                `Job ${parsedId} cannot be started (status: ${job.info().status}). ` +
+                  `Remove and recreate the job to seed again.`
+              )
+          }
           job.seedCache()
         } else if (action === 'stop') {
           job.cancelJob()
