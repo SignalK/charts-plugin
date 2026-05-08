@@ -120,6 +120,21 @@ async function scanDir(
   const tasks: Promise<void>[] = []
   for (const entry of entries) {
     if (entry.isSymbolicLink()) continue
+    // Plugin-managed directories that share the cache root with chart paths.
+    // `.working/` holds proxy-cache mbtiles being written to by the
+    // ChartDownloader (must not be opened read-only by the scanner) and any
+    // other internal artifacts. `exports/` holds region snapshots intended
+    // for offline transfer (USB stick to another SK server) and is excluded
+    // so the file isn't auto-picked-up while the user is preparing it. The
+    // dot-prefix is also a cross-platform "ignore me" convention.
+    if (
+      depth === 0 &&
+      (entry.name === '.working' ||
+        entry.name === 'exports' ||
+        entry.name.startsWith('.'))
+    ) {
+      continue
+    }
     const entryPath = path.resolve(dir, entry.name)
     if (entry.name.match(/\.mbtiles$/i)) {
       if (mbtilesLoadError) {
