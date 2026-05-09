@@ -27,6 +27,20 @@ import { ChartProvider, TokenProviderConfig } from './types'
 const RANGE_PLACEHOLDER = /\{(\d+)-(\d+)\}/g
 const TOKEN_PLACEHOLDER = /\{token\.([a-zA-Z0-9_]+)\}/g
 
+// Strip query string and userinfo from a URL before logging. Token
+// endpoints commonly carry secrets in query params (?api_key=...) or
+// userinfo (https://user:pass@host); the host alone is enough context
+// for an admin to recognise which provider failed without the secrets
+// landing in shared logs.
+function redactUrl(raw: string): string {
+  try {
+    const u = new URL(raw)
+    return `${u.protocol}//${u.host}${u.pathname}`
+  } catch {
+    return '<unparseable url>'
+  }
+}
+
 export class TokenProvider {
   // Resolved token fields (string-valued only; non-strings from the JSON
   // response are dropped during fetchToken to keep template substitution
@@ -69,17 +83,31 @@ export class TokenProvider {
 
   private async fetchToken(): Promise<void> {
     const ep = this.config.tokenEndpoint
-    const res = await fetch(ep.url, {
-      method: ep.method ?? 'GET',
-      headers: ep.headers,
-      body: ep.body
-    })
+    const timeoutMs = ep.timeoutMs ?? 10000
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    let res: Response
+    try {
+      res = await fetch(ep.url, {
+        method: ep.method ?? 'GET',
+        headers: ep.headers,
+        body: ep.body,
+        signal: controller.signal
+      })
+    } finally {
+      clearTimeout(timer)
+    }
     if (!res.ok) {
-      throw new Error(`token endpoint ${ep.url} returned ${res.status}`)
+      // Avoid embedding the full URL in the error: token endpoints often
+      // carry secrets in query params, and this message lands in
+      // ensureFreshToken's console.warn.
+      throw new Error(
+        `token endpoint ${redactUrl(ep.url)} returned ${res.status}`
+      )
     }
     const data = (await res.json()) as unknown
     if (typeof data !== 'object' || data === null) {
-      throw new Error(`token endpoint ${ep.url} returned non-object`)
+      throw new Error(`token endpoint ${redactUrl(ep.url)} returned non-object`)
     }
     const next: { [key: string]: string } = {}
     for (const [k, v] of Object.entries(data)) {
@@ -186,6 +214,14 @@ export function chartProviderFromTokenConfig(
  * problem found. Validates the fields the implementation actually relies
  * on; admins can still pass extra fields without error.
  */
+// Identifier shape: URL-safe characters only. Identifier flows into
+// filename construction (export mbtiles), tile-route URLs
+// (~tilePath~/{id}/...), and chartProviders dict keys; an identifier
+// containing slashes, dots, or whitespace produces malformed URLs and
+// confused-deputy lookups, even though the export-path traversal is
+// caught downstream. Defensive check at the validator. PARA-005.
+const IDENTIFIER_RE = /^[A-Za-z0-9_-]+$/
+
 export function validateTokenProviderConfig(
   raw: unknown,
   index: number
@@ -197,6 +233,12 @@ export function validateTokenProviderConfig(
   const c = raw as Record<string, unknown>
   if (typeof c['identifier'] !== 'string' || c['identifier'].length === 0) {
     throw new Error(`${where}: identifier is required (non-empty string)`)
+  }
+  if (!IDENTIFIER_RE.test(c['identifier'])) {
+    throw new Error(
+      `${where}: identifier "${c['identifier']}" must match /[A-Za-z0-9_-]+/ ` +
+        `(used as a URL path segment and filename component)`
+    )
   }
   if (typeof c['name'] !== 'string' || c['name'].length === 0) {
     throw new Error(`${where}: name is required (non-empty string)`)
