@@ -44,7 +44,13 @@ export function openOrCreateMbtiles(
           mbtiles._db?.exec('PRAGMA journal_mode = WAL')
           mbtiles._db?.exec('PRAGMA synchronous = NORMAL')
           mbtiles._db?.exec('PRAGMA temp_store = MEMORY')
-          mbtiles._db?.exec('PRAGMA locking_mode = EXCLUSIVE')
+          // NORMAL locking_mode rather than EXCLUSIVE: WAL + single-writer
+          // already serialises us, and EXCLUSIVE blocks any second connection
+          // attempt — including a plugin reload that races a previous
+          // connection's close on the same file (which happens in tests
+          // running mocha serially, and in production on a quick disable/
+          // enable cycle).
+          mbtiles._db?.exec('PRAGMA locking_mode = NORMAL')
           mbtiles._db?.exec('PRAGMA cache_size = -20000') // ~20MB RAM cache
           mbtiles._db?.exec('PRAGMA page_size = 4096')
           mbtiles._db?.exec('PRAGMA mmap_size = 268435456') // 256MB mmap if supported

@@ -142,6 +142,10 @@ export interface TokenProviderConfig {
     headers?: { [key: string]: string }
     body?: string
     ttlSeconds: number
+    // Abort the token fetch after this many milliseconds. A hung token
+    // endpoint would otherwise stall every concurrent tile request that
+    // joins the in-flight promise. Default: 10000.
+    timeoutMs?: number
   }
   // Tile request template. `{z} {x} {y} {-y} {z-2}` are substituted by the
   // existing fetchTileFromRemote logic. `{token.<field>}` is substituted

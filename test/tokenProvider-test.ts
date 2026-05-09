@@ -14,8 +14,16 @@ import {
   chartProviderFromTokenConfig,
   validateTokenProviderConfig
 } from '../src/tokenProvider'
-import { ChartDownloader } from '../src/chartDownloader'
+import { ChartDownloader, ChartSeedingManager } from '../src/chartDownloader'
 import type { TokenProviderConfig } from '../src/types'
+
+// Reset module-level statics on ChartDownloader before each test so
+// nextJobId / CacheStatistics / lastDiskSpaceCheck / tileRetryBackoffMs
+// don't leak across tests. resetForTests sets tileRetryBackoffMs to 0
+// so mocked-503 retries don't add 1.5s of dead time per test.
+beforeEach(() => {
+  ChartSeedingManager.resetForTests()
+})
 
 // Minimal valid config used as the base for tweaks. Each test extends this
 // rather than rebuilding from scratch, so the relevant difference stays

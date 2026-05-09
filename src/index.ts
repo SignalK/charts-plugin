@@ -79,6 +79,14 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
   let sanitizedV1: { [key: string]: SanitizedProvider } = {}
   let sanitizedV2: { [key: string]: SanitizedProvider } = {}
   let pluginStarted = false
+  // pluginStarted vs pluginActive: pluginStarted is "registerRoutes has run"
+  // (sticky for the lifetime of the plugin closure — Express routes
+  // shouldn't double-register on a stop/start cycle). pluginActive is "is
+  // the plugin currently running" — flipped to true at the end of
+  // doStartup, false at the start of stop(). Watcher reloads check the
+  // latter so a queued reload from before stop() is harmless after stop().
+  // OPER-008.
+  let pluginActive = false
   let providerRegistered = false
   let props: Config = {
     chartPaths: [],
@@ -114,15 +122,25 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
   // stale entries (which would otherwise show 'completed' for a provider
   // that's no longer configured).
   type MigrationStatus = {
-    state: 'running' | 'completed' | 'failed'
+    state: 'running' | 'completed' | 'failed' | 'cancelled'
     startedAt: number
     completedAt?: number
     legacyDir: string
     deleteSource: boolean
     counts: { migrated: number; skipped: number; failed: number }
     error?: string
+    // AbortController bound to a running migration. plugin.stop() aborts
+    // these so a multi-hour walk doesn't keep writing to a closed mbtiles
+    // handle (OPER-002). Tracked promise lets stop() await graceful exit
+    // before closing handles.
+    controller?: AbortController
+    promise?: Promise<void>
   }
   const migrationStatuses: Map<string, MigrationStatus> = new Map()
+  // Cooldown after a migration completes — protects against an admin
+  // client polling `migrate` and re-firing on completion (OPER-012).
+  // Re-running before the cooldown returns 429.
+  const MIGRATION_COOLDOWN_MS = 60_000
   // Last scan result, surfaced in the config schema description so the admin
   // UI shows per-path counts when the user reopens the plugin config. Issue #8.
   let lastChartPathCounts: ChartPathCount[] = []
@@ -399,10 +417,19 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
           Object.keys(chartProviders).length
         } provider(s) will be released)`
       )
+      pluginActive = false
       stopWatchers()
       // Cancel any running seeding jobs so a disabled plugin doesn't keep
       // pulling tiles from remote providers in the background.
       ChartSeedingManager.cancelAll()
+      // Cancel any in-flight legacy migration. Without this, the walk
+      // keeps calling putTile against a handle we're about to close —
+      // every call errors-and-counts-as-failed for thousands of remaining
+      // tiles, and a quick restart can race the orphan loop against a
+      // freshly opened connection on the same file. OPER-002.
+      for (const status of migrationStatuses.values()) {
+        if (status.state === 'running') status.controller?.abort()
+      }
       // Close open SQLite connections so the user can move or delete chart
       // files while the plugin is stopped (Windows blocks deletion on open
       // handles). Restart re-opens fresh via findCharts.
@@ -495,6 +522,7 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
     // either throw or duplicate the handler.
     if (!pluginStarted) registerRoutes()
     pluginStarted = true
+    pluginActive = true
     if (serverMajorVersion === 2 && !providerRegistered) {
       app.debug('** Registering v2 API paths **')
       registerAsProvider()
@@ -704,12 +732,37 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
   // Chart folders are watched so new/renamed/deleted files become visible
   // without a plugin restart. FSWatcher bursts events during rename and
   // atomic-save sequences; the debounce collapses a burst into one reload.
+  // Set while loadChartProviders is running so a watcher event during a
+  // reload doesn't kick off a parallel one. Combined with the debounce
+  // and the pluginStarted check, this means at most one
+  // loadChartProviders is in-flight at a time. OPER-008.
+  let loadInFlight = false
+
   const scheduleReload = () => {
     if (reloadTimer) clearTimeout(reloadTimer)
     reloadTimer = setTimeout(() => {
       reloadTimer = undefined
+      // Guards against the stop()-during-debounce race: a watcher event
+      // queues a reload, then the admin disables the plugin during the
+      // debounce window. Without this check the reload fires after stop()
+      // has cleared chartProviders, opens fresh mbtiles handles, and the
+      // next stop() doesn't know about them. OPER-008.
+      if (!pluginActive) return
+      if (loadInFlight) {
+        // Reschedule rather than drop: the in-flight reload may have
+        // captured pre-event state.
+        scheduleReload()
+        return
+      }
       app.debug('Reloading charts after filesystem change')
+      loadInFlight = true
       loadChartProviders()
+        .catch((e) =>
+          console.warn(`[charts-plugin] reload failed: ${(e as Error).message}`)
+        )
+        .finally(() => {
+          loadInFlight = false
+        })
     }, RELOAD_DEBOUNCE_MS)
   }
 
@@ -815,24 +868,65 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
       }
     )
 
-    app.post(`${chartTilesPath}/cache/regions`, (req, res) => {
-      const geojson = req.body
-      const p = path.join(app.getDataDirPath(), 'regions.json')
-      fs.writeFileSync(p, JSON.stringify(geojson, null, 2))
-      // TODO: return json with signalk response format
-      return res.send({ status: 'ok' })
-    })
-
-    app.get(`${chartTilesPath}/cache/regions`, (_req, res) => {
-      const p = path.join(app.getDataDirPath(), 'regions.json')
-      try {
-        const raw = fs.readFileSync(p, 'utf8')
-        const data = JSON.parse(raw)
-        return res.json(data)
-      } catch (_e) {
-        return res.json({ type: 'FeatureCollection', features: [] })
+    // Hard cap on the persisted regions.json size. The webapp posts the
+    // full FeatureCollection on every save; allowing arbitrary growth
+    // would let an admin (or a misbehaving client) fill the data dir.
+    // PARA-006.
+    const MAX_REGIONS_BYTES = 1024 * 1024 // 1 MB; thousands of detailed polygons
+    app.post(
+      `${chartTilesPath}/cache/regions`,
+      async (req: Request, res: Response) => {
+        // Validate the body shape: we expect a GeoJSON FeatureCollection.
+        // Without this, anything JSON-shaped lands in regions.json and
+        // breaks the GET handler / the webapp on next read. PARA-004.
+        const body = req.body as unknown
+        if (
+          typeof body !== 'object' ||
+          body === null ||
+          (body as { type?: unknown }).type !== 'FeatureCollection' ||
+          !Array.isArray((body as { features?: unknown }).features)
+        ) {
+          return res
+            .status(400)
+            .send('expected a GeoJSON FeatureCollection with a features array')
+        }
+        const serialised = JSON.stringify(body, null, 2)
+        if (Buffer.byteLength(serialised, 'utf8') > MAX_REGIONS_BYTES) {
+          return res
+            .status(413)
+            .send(`regions payload exceeds ${MAX_REGIONS_BYTES} bytes`)
+        }
+        // Async write so a slow SD card on a Pi doesn't stall the event
+        // loop, and a try/catch so an EACCES / ENOSPC produces a useful
+        // 500 instead of an uncaught throw. OPER-013.
+        const p = path.join(app.getDataDirPath(), 'regions.json')
+        try {
+          await fs.promises.writeFile(p, serialised, 'utf8')
+        } catch (err) {
+          console.warn(
+            `[charts-plugin] failed to write ${p}: ${(err as Error).message}`
+          )
+          return res
+            .status(500)
+            .send(`failed to persist regions: ${(err as Error).message}`)
+        }
+        return res.send({ status: 'ok' })
       }
-    })
+    )
+
+    app.get(
+      `${chartTilesPath}/cache/regions`,
+      async (_req: Request, res: Response) => {
+        const p = path.join(app.getDataDirPath(), 'regions.json')
+        try {
+          const raw = await fs.promises.readFile(p, 'utf8')
+          const data = JSON.parse(raw)
+          return res.json(data)
+        } catch (_e) {
+          return res.json({ type: 'FeatureCollection', features: [] })
+        }
+      }
+    )
 
     app.get(`${chartTilesPath}/cache/stats`, (_req, res) => {
       const data = ChartDownloader.getStatistics()
@@ -871,6 +965,33 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
                 `Wait for it to complete or check GET /cache/${identifier}/migrate.`
             )
         }
+        // Cooldown after completion: a flapping admin client polling
+        // GET .../migrate and re-firing on completion would otherwise
+        // walk the directory continuously. OPER-012.
+        if (
+          existing &&
+          existing.state !== 'running' &&
+          existing.completedAt &&
+          Date.now() - existing.completedAt < MIGRATION_COOLDOWN_MS
+        ) {
+          return res
+            .status(429)
+            .header(
+              'Retry-After',
+              String(
+                Math.ceil(
+                  (MIGRATION_COOLDOWN_MS -
+                    (Date.now() - existing.completedAt)) /
+                    1000
+                )
+              )
+            )
+            .send(
+              `Migration for "${identifier}" recently ${existing.state}; ` +
+                `wait ${Math.ceil(MIGRATION_COOLDOWN_MS / 1000)}s before re-running. ` +
+                `Previous result: ${JSON.stringify(existing.counts)}`
+            )
+        }
         const body = (req.body ?? {}) as {
           sourceName?: string
           deleteSource?: boolean
@@ -880,38 +1001,54 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
             ? body.sourceName
             : provider.name
         const legacyDir = path.resolve(cachePath, sourceName)
-        // path.resolve guards against `../` escape: the resolved path must
-        // sit under cachePath, otherwise sourceName tried to traverse out.
-        if (!legacyDir.startsWith(path.resolve(cachePath))) {
+        // path.resolve guards against `../` escape, but a naive prefix
+        // startsWith check has a false-negative when a sibling directory
+        // happens to share the cachePath prefix (e.g. cachePath
+        // `/var/lib/sk/charts` + sourceName `../charts-shared` resolves
+        // to `/var/lib/sk/charts-shared` which startsWith `/var/lib/sk/charts`).
+        // Require the resolved path to equal cachePath OR start with
+        // `cachePath + sep`. PARA-001.
+        const cacheBase = path.resolve(cachePath)
+        if (
+          legacyDir !== cacheBase &&
+          !legacyDir.startsWith(cacheBase + path.sep)
+        ) {
           return res.status(400).send('sourceName must not escape cachePath')
         }
         const handle = provider._mbtilesHandle
         const deleteSource = body.deleteSource === true
+        const controller = new AbortController()
         const status: MigrationStatus = {
           state: 'running',
           startedAt: Date.now(),
           legacyDir,
           deleteSource,
-          counts: { migrated: 0, skipped: 0, failed: 0 }
+          counts: { migrated: 0, skipped: 0, failed: 0 },
+          controller
         }
         migrationStatuses.set(identifier, status)
+        console.log(
+          `[charts-plugin] migration for "${identifier}" started ` +
+            `legacyDir=${legacyDir} deleteSource=${deleteSource}`
+        )
         // Fire and forget: log on completion / failure and update the
         // shared status entry so GET ../migrate can surface progress.
         // The onProgress callback updates counts every 500 processed
         // entries, giving the admin a way to confirm forward progress
         // without grepping logs.
-        migrateLegacyTileCache(legacyDir, handle, {
+        const promise = migrateLegacyTileCache(legacyDir, handle, {
           deleteSource,
+          signal: controller.signal,
           onProgress: (counts) => {
             status.counts = { ...counts }
           }
         })
           .then((counts) => {
             status.counts = counts
-            status.state = 'completed'
+            status.state = controller.signal.aborted ? 'cancelled' : 'completed'
             status.completedAt = Date.now()
-            app.debug(
-              `Legacy migration for "${identifier}" done: ` +
+            console.log(
+              `[charts-plugin] migration for "${identifier}" ${status.state}: ` +
                 `${counts.migrated} migrated, ${counts.skipped} skipped, ` +
                 `${counts.failed} failed`
             )
@@ -920,10 +1057,11 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
             status.state = 'failed'
             status.completedAt = Date.now()
             status.error = err.message
-            app.debug(
-              `Legacy migration for "${identifier}" failed: ${err.message}`
+            console.warn(
+              `[charts-plugin] migration for "${identifier}" failed: ${err.message}`
             )
           })
+        status.promise = promise
         return res.status(202).json({
           status: 'started',
           provider: identifier,
@@ -1218,6 +1356,22 @@ const convertOnlineProviderConfig = (provider: OnlineChartProvider) => {
 // block (v1 has tilemapUrl/chartLayers, v2 has url/layers), rewriting the
 // tile-path placeholder. Intentionally a single shallow walk — the previous
 // implementation did three deep clones per call and ran per metadata request.
+// Strip HTML / script-injection vectors from mbtiles name and description
+// fields before they cross the API boundary. The webapp's Leaflet
+// L.Control.Layers writes these into innerHTML — a malicious .mbtiles
+// shared via USB stick or forum could ship a metadata.name like
+// `<img src=x onerror="..."> ` and execute in the admin's session.
+// Server-side sanitisation lets the (vendored) UI keep its current
+// rendering path without per-call escaping. PARA-002.
+const stripHtml = (s: string): string =>
+  s
+    // Drop tags entirely. We don't try to preserve any HTML — this is
+    // chart metadata from a SQLite blob, not rich text.
+    .replace(/<[^>]*>/g, '')
+    // Belt-and-braces: collapse any standalone & < > so an unbalanced
+    // input doesn't produce something the browser still treats as markup.
+    .replace(/[<>]/g, '')
+
 const sanitizeProvider = (
   provider: ChartProvider,
   version: 1 | 2 = 1
@@ -1225,7 +1379,16 @@ const sanitizeProvider = (
   const out: SanitizedProvider = {}
   for (const [key, value] of Object.entries(provider)) {
     if (key.startsWith('_') || key === 'v1' || key === 'v2') continue
-    out[key] = value
+    // Defang any string field that the webapp might later render via
+    // innerHTML (Leaflet L.Control.Layers, custom tooltips, etc).
+    if (
+      (key === 'name' || key === 'description') &&
+      typeof value === 'string'
+    ) {
+      out[key] = stripHtml(value)
+    } else {
+      out[key] = value
+    }
   }
   const v = version === 1 ? provider.v1 : provider.v2
   if (v) {

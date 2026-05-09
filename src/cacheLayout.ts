@@ -90,8 +90,19 @@ export async function migrateLegacyCacheLayout(
   let oldExports: import('fs').Dirent[] = []
   try {
     oldExports = await fs.readdir(oldExportDir, { withFileTypes: true })
-  } catch {
-    // No legacy export directory; nothing to do.
+  } catch (err) {
+    // ENOENT: legacy dir doesn't exist, nothing to migrate. Any other
+    // error (EACCES, EBUSY, EIO) means the dir might exist but we
+    // couldn't read it — surface that so the admin sees half-migrated
+    // state instead of a silent skip. OPER-007.
+    const code = (err as NodeJS.ErrnoException).code
+    if (code !== 'ENOENT') {
+      console.warn(
+        `[charts-plugin] could not read legacy export dir ${oldExportDir}: ` +
+          `${(err as Error).message} ` +
+          `(proxy-cache migration above may have completed; manual cleanup needed)`
+      )
+    }
     return
   }
   for (const entry of oldExports) {
@@ -151,6 +162,11 @@ export async function migrateLegacyTileCache(
   opts: {
     deleteSource?: boolean
     onProgress?: (counts: LegacyMigrationCounts) => void
+    // Cooperative cancellation. Migration walks check this between tile
+    // operations; on abort the walk stops cleanly and returns the
+    // partial counts. Used by plugin.stop() to halt a multi-hour walk
+    // before closing the mbtiles handle (OPER-002).
+    signal?: AbortSignal
   } = {}
 ): Promise<LegacyMigrationCounts> {
   const counts: LegacyMigrationCounts = {
@@ -169,6 +185,7 @@ export async function migrateLegacyTileCache(
   }
 
   for (const zEntry of zEntries) {
+    if (opts.signal?.aborted) return counts
     if (!zEntry.isDirectory()) {
       counts.skipped++
       continue
@@ -187,6 +204,7 @@ export async function migrateLegacyTileCache(
       continue
     }
     for (const xEntry of xEntries) {
+      if (opts.signal?.aborted) return counts
       if (!xEntry.isDirectory()) {
         counts.skipped++
         continue
@@ -205,6 +223,7 @@ export async function migrateLegacyTileCache(
         continue
       }
       for (const yEntry of yEntries) {
+        if (opts.signal?.aborted) return counts
         if (!yEntry.isFile() || !TILE_EXTENSION.test(yEntry.name)) {
           counts.skipped++
           continue

@@ -23,6 +23,16 @@ process.env.SK_CHARTS_RELOAD_DEBOUNCE_MS = '150'
 import Plugin = require('../src/index')
 import expectedCharts from './expected-charts.json'
 import * as TileHelpers from '../src/chartDownloaderTileHelpers'
+import { ChartSeedingManager } from '../src/chartDownloader'
+
+// Global before/after hooks so every test starts from a clean static-state
+// baseline. ChartDownloader holds module-level static fields (nextJobId,
+// CachingEnabled, CacheStatistics, lastDiskSpaceCheck, lastDiskSpaceResult)
+// that survive plugin.stop() — by design in production but cross-test
+// poison in a long mocha run.
+beforeEach(() => {
+  ChartSeedingManager.resetForTests()
+})
 
 // The Plugin interface from @signalk/server-api types `start` as
 // `(config, restart) => void`, but charts-plugin's real implementation

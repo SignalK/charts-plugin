@@ -74,13 +74,69 @@ export enum TileSource {
   FetchedFromRemote
 }
 
+// Categorised failure kinds for tile fetches. Lets the worker keep
+// per-job counts so an admin staring at "500000 failed" can tell whether
+// the upstream is timing out, the auth is wrong, or the network is gone.
+// Used in TileFetchResult.failure and surfaced via job.info().failures.
+export enum FailureKind {
+  None = 'none',
+  Timeout = 'timeout',
+  HttpClient = 'http_4xx',
+  HttpServer = 'http_5xx',
+  Network = 'network',
+  NoRemoteUrl = 'no_remote_url'
+}
+
+export interface TileFetchFailure {
+  kind: FailureKind
+  status?: number
+}
+
 export interface TileFetchResult {
   buffer: Buffer | null
   source: TileSource
+  failure?: TileFetchFailure
 }
+
+// Per-job failure-cause histogram. Keyed by FailureKind so a stalled
+// progress bar in the UI can show "1234 timeouts, 5 auth, 200 5xx"
+// instead of an undifferentiated count. Aggregated by the seed worker.
+export type FailureCounts = Partial<Record<FailureKind, number>>
+
+// Default tile-fetch timeout. Bumped from 5s to 10s — some legitimate
+// tile providers (NOAA WMS, custom inland-water sources) take 5-15s on
+// a cold-cache backend tile and a 5s default marked them as failures.
+// Per-provider override available via OnlineChartProvider.timeoutMs and
+// TokenProviderConfig.tile.timeoutMs (added on the same change).
+const TILE_FETCH_TIMEOUT_MS = 10000
+// Default backoff before a single retry on a transient 5xx (502/503).
+// Picked to be long enough that an upstream momentary blip clears, short
+// enough that 32 workers don't all stall on a hard outage. Configurable
+// at runtime via ChartDownloader.tileRetryBackoffMs (test harness sets
+// it to 0 to keep mocked-503 tests fast).
+const DEFAULT_TILE_RETRY_BACKOFF_MS = 1500
 
 export class ChartSeedingManager {
   public static ActiveJobs: { [key: number]: ChartDownloader } = {}
+
+  /**
+   * Reset all module-level static state owned by ChartSeedingManager and
+   * ChartDownloader so a test harness can run from a known baseline.
+   *
+   * The plugin's static fields outlive a `stop()` / `start()` cycle in
+   * production (which is intended — process-global gates and ID sequences),
+   * but in a test process running 200+ tests in sequence the residue
+   * shows up as cross-test interference: nextJobId drifts upward, an
+   * earlier low-disk-space probe leaves CachingEnabled=false for 2s,
+   * stale CacheStatistics from one provider get seen by an unrelated
+   * test asserting "stats are an object".
+   *
+   * Production code never calls this. The test app's beforeEach does.
+   */
+  public static resetForTests(): void {
+    this.ActiveJobs = {}
+    ChartDownloader.resetForTests()
+  }
 
   public static async createJob(
     cachePath: string,
@@ -117,6 +173,9 @@ export class ChartDownloader {
   private static TilesCached = 0
   private static lastDiskSpaceCheck = 0
   private static lastDiskSpaceResult = true
+  // See DEFAULT_TILE_RETRY_BACKOFF_MS. Public so the test harness can drop
+  // it to 0; production code should treat it as read-only.
+  public static tileRetryBackoffMs: number = DEFAULT_TILE_RETRY_BACKOFF_MS
 
   private id: number = ChartDownloader.nextJobId++
 
@@ -128,6 +187,14 @@ export class ChartDownloader {
   private failedTiles = 0
   private cachedTiles = 0
   private deletedTiles = 0
+
+  // Per-job failure histogram, keyed by FailureKind. Surfaced via
+  // info().failures so the UI / admin can tell timeouts apart from
+  // 5xx apart from auth failures without grepping logs. Only the
+  // first failure of each kind is logged in detail (sampleLogged)
+  // so a job with 500k failed tiles doesn't drown the log buffer.
+  private failureCounts: FailureCounts = {}
+  private sampleLogged: Set<FailureKind> = new Set()
 
   private areaDescription = ''
   private cancelRequested = false
@@ -205,7 +272,14 @@ export class ChartDownloader {
     this.downloadedTiles = 0
     this.cachedTiles = 0
     this.failedTiles = 0
+    this.failureCounts = {}
+    this.sampleLogged = new Set()
     this.type = JobType.Seed
+    console.log(
+      `[charts-plugin] job ${this.id} started seeding ` +
+        `provider=${this.provider.identifier} ` +
+        `area="${this.areaDescription}" totalTiles=${this.totalTiles}`
+    )
 
     const tileIterator = this.tiles()
     let generatorDone = false
@@ -243,6 +317,23 @@ export class ChartDownloader {
 
           if (result.source === TileSource.None) {
             this.failedTiles++
+            const kind = result.failure?.kind ?? FailureKind.Network
+            this.failureCounts[kind] = (this.failureCounts[kind] ?? 0) + 1
+            // Log the first instance of each failure kind in this job —
+            // gives an operator something to grep for ("job 42 timeout
+            // first at z=12 x=2057 y=1364 status=undefined") without
+            // 500k log lines if every tile fails.
+            if (!this.sampleLogged.has(kind)) {
+              this.sampleLogged.add(kind)
+              console.warn(
+                `[charts-plugin] job ${this.id} ` +
+                  `provider=${this.provider.identifier} ` +
+                  `first ${kind} failure at z=${tile.z} x=${tile.x} y=${tile.y}` +
+                  (result.failure?.status
+                    ? ` status=${result.failure.status}`
+                    : '')
+              )
+            }
           } else if (result.source === TileSource.FetchedFromCache) {
             this.cachedTiles++
           } else {
@@ -254,6 +345,17 @@ export class ChartDownloader {
           )
         } catch (err) {
           this.failedTiles++
+          const msg = (err as Error).message ?? String(err)
+          this.failureCounts[FailureKind.Network] =
+            (this.failureCounts[FailureKind.Network] ?? 0) + 1
+          if (!this.sampleLogged.has(FailureKind.Network)) {
+            this.sampleLogged.add(FailureKind.Network)
+            console.warn(
+              `[charts-plugin] job ${this.id} ` +
+                `provider=${this.provider.identifier} ` +
+                `first uncaught failure at z=${tile.z} x=${tile.x} y=${tile.y}: ${msg}`
+            )
+          }
         }
       }
     }
@@ -284,7 +386,9 @@ export class ChartDownloader {
         )
       )
 
-      if (!filePath.startsWith(baseDir)) {
+      // Same separator-aware check as the migrate endpoint: a naive
+      // startsWith would miss sibling-directory prefix collisions.
+      if (filePath !== baseDir && !filePath.startsWith(baseDir + path.sep)) {
         throw new Error('Invalid path detected')
       }
 
@@ -304,6 +408,13 @@ export class ChartDownloader {
       mbtiles._db?.exec('PRAGMA wal_checkpoint(TRUNCATE);')
     }
     this.status = 'Completed'
+    console.log(
+      `[charts-plugin] job ${this.id} completed ` +
+        `provider=${this.provider.identifier} ` +
+        `downloaded=${this.downloadedTiles} cached=${this.cachedTiles} ` +
+        `failed=${this.failedTiles} ` +
+        `failures=${JSON.stringify(this.failureCounts)}`
+    )
   }
 
   async deleteCache(): Promise<void> {
@@ -311,15 +422,22 @@ export class ChartDownloader {
     this.deletedTiles = 0
     this.type = JobType.Delete
     this.status = 'Deleting tiles'
+    console.log(
+      `[charts-plugin] job ${this.id} delete started ` +
+        `provider=${this.provider.identifier} totalTiles=${this.totalTiles}`
+    )
     const db = requireMbtilesDb(this.provider)
     await deleteTilesInChunks(db, this.tilesInDB(), 1000, (deleted) => {
-      console.log(`Deleted ${deleted} / ${this.totalTiles}`)
+      console.log(
+        `[charts-plugin] job ${this.id} deleted ${deleted} / ${this.totalTiles}`
+      )
     })
     this.status = 'Purging orphaned images'
     await purgeAllOrphanImages(db, 1000, (deleted, totalDeleted) => {
       this.deletedTiles += deleted
       console.log(
-        `Purged ${totalDeleted} orphaned images (last chunk ${deleted})`
+        `[charts-plugin] job ${this.id} purged ${totalDeleted} orphans ` +
+          `(last chunk ${deleted})`
       )
     })
     if (this.options.vacuum) {
@@ -328,6 +446,11 @@ export class ChartDownloader {
     }
     this.status = 'Completed'
     this.state = State.Stopped
+    console.log(
+      `[charts-plugin] job ${this.id} delete completed ` +
+        `provider=${this.provider.identifier} ` +
+        `deletedTiles=${this.deletedTiles}`
+    )
   }
 
   public cancelJob() {
@@ -358,6 +481,10 @@ export class ChartDownloader {
       downloadedTiles: this.downloadedTiles,
       cachedTiles: this.cachedTiles,
       failedTiles: this.failedTiles,
+      // Per-failure-kind histogram. Empty {} for jobs with no failures.
+      // Surfaced so the UI / admin can see "1234 timeouts, 5 auth, 200 5xx"
+      // instead of an undifferentiated failedTiles count.
+      failures: { ...this.failureCounts },
       deletedTiles: this.deletedTiles,
       progress: progress(),
       status: this.status,
@@ -390,7 +517,8 @@ export class ChartDownloader {
     }
 
     // Cache miss: fetch from remote
-    const buffer = await ChartDownloader.fetchTileFromRemote(provider, tile)
+    const { buffer, failure } =
+      await ChartDownloader.fetchTileFromRemoteDetailed(provider, tile)
     ChartDownloader.CachingEnabled =
       await ChartDownloader.hasDiskSpace(chartsPath)
     if (ChartDownloader.CachingEnabled && buffer) {
@@ -401,10 +529,14 @@ export class ChartDownloader {
         tile,
         buffer
       )
-      return { buffer, source: TileSource.FetchedFromRemote }
+      return {
+        buffer,
+        source: TileSource.FetchedFromRemote,
+        failure: { kind: FailureKind.None }
+      }
     }
     stats.failures++
-    return { buffer: null, source: TileSource.None }
+    return { buffer: null, source: TileSource.None, failure }
   }
 
   static async getTileFromMbTiles(
@@ -470,11 +602,24 @@ export class ChartDownloader {
     }
   }
 
-  static async fetchTileFromRemote(
+  /**
+   * Detailed-result variant of fetchTileFromRemote. Returns the buffer on
+   * success and a `failure` discriminator on every other path so the
+   * caller can attribute "failed" tiles to a specific cause (timeout vs
+   * 5xx vs network) for diagnostic logs and per-job counters.
+   *
+   * Retries once on 502/503 with TILE_RETRY_BACKOFF_MS backoff: those are
+   * the response codes that genuinely benefit from one more try (LB hiccup,
+   * backend cold-start). 504 is excluded because it means the upstream
+   * already waited; another wait makes the per-tile latency intolerable.
+   * 4xx are not retried (auth or "tile genuinely doesn't exist" — neither
+   * gets better by trying again).
+   */
+  static async fetchTileFromRemoteDetailed(
     provider: ChartProvider,
     tile: Tile,
-    timeoutMs = 5000
-  ): Promise<Buffer | null> {
+    timeoutMs: number = TILE_FETCH_TIMEOUT_MS
+  ): Promise<{ buffer: Buffer | null; failure: TileFetchFailure }> {
     // Token providers fetch their token lazily; awaiting here ensures
     // remoteUrl/headers below template against a non-stale token. Fast-path
     // when the cached token is still inside its TTL: the call returns
@@ -486,7 +631,7 @@ export class ChartDownloader {
     // is open to any provider, so callers can still land here and should get
     // a well-defined null rather than a crash.
     if (!provider.remoteUrl) {
-      return null
+      return { buffer: null, failure: { kind: FailureKind.NoRemoteUrl } }
     }
     let url = provider.remoteUrl
       .replace('{z}', tile.z.toString())
@@ -516,37 +661,86 @@ export class ChartDownloader {
         url = url.replace('{bbox_3857}', `${mx1},${my1},${mx2},${my2}`)
       }
     }
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
-    try {
-      const response = await fetch(url, {
-        headers: provider.headers,
-        signal: controller.signal
-      })
-      // Clear the abort timer as soon as the response head is in. A long body
-      // read was otherwise racing the timeout and could be aborted mid-stream
-      // while the caller waited on arrayBuffer().
-      clearTimeout(timeoutId)
-      if (!response.ok) {
+
+    let lastFailure: TileFetchFailure = { kind: FailureKind.Network }
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (attempt > 0) {
+        await new Promise((r) =>
+          setTimeout(r, ChartDownloader.tileRetryBackoffMs)
+        )
+      }
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+      try {
+        const response = await fetch(url, {
+          headers: provider.headers,
+          signal: controller.signal
+        })
+        // Clear the abort timer as soon as the response head is in. A long
+        // body read was otherwise racing the timeout and could be aborted
+        // mid-stream while the caller waited on arrayBuffer().
+        clearTimeout(timeoutId)
+        if (response.ok) {
+          const arrayBuffer = await response.arrayBuffer()
+          return {
+            buffer: Buffer.from(arrayBuffer),
+            failure: { kind: FailureKind.None }
+          }
+        }
         // For token providers, an upstream 401/403 most likely means the
         // cached token has expired or been revoked. Invalidate so the next
-        // fetch refreshes it instead of hammering with the stale value.
-        // 5xx and other non-auth errors don't trigger this — they're not
-        // about credentials and refetching the token won't help.
+        // fetch refreshes it. 5xx and other non-auth errors don't trigger
+        // this — they're not about credentials.
         if (
           (response.status === 401 || response.status === 403) &&
           provider._tokenProvider
         ) {
           provider._tokenProvider.invalidateToken()
         }
-        return null
+        const kind =
+          response.status >= 500
+            ? FailureKind.HttpServer
+            : FailureKind.HttpClient
+        lastFailure = { kind, status: response.status }
+        // Retry only on 502/503 — those are the LB/backend-blip codes
+        // worth a second try. 504 already implies a long wait upstream;
+        // 4xx won't change on retry.
+        if (response.status === 502 || response.status === 503) continue
+        return { buffer: null, failure: lastFailure }
+      } catch (err) {
+        clearTimeout(timeoutId)
+        // AbortError vs other network errors: the timeout's controller.abort
+        // throws an AbortError. Treat any other thrown error as Network.
+        const isAbort =
+          (err as { name?: string }).name === 'AbortError' ||
+          controller.signal.aborted
+        lastFailure = {
+          kind: isAbort ? FailureKind.Timeout : FailureKind.Network
+        }
+        // Don't retry on timeout (already slow) or generic network error
+        // (likely DNS/route failure — won't recover in 1.5s).
+        return { buffer: null, failure: lastFailure }
       }
-      const arrayBuffer = await response.arrayBuffer()
-      return Buffer.from(arrayBuffer)
-    } catch (_err) {
-      clearTimeout(timeoutId)
-      return null
     }
+    return { buffer: null, failure: lastFailure }
+  }
+
+  /**
+   * Backwards-compatible wrapper for callers that only need the buffer.
+   * Internal callers should prefer fetchTileFromRemoteDetailed for the
+   * categorised failure information.
+   */
+  static async fetchTileFromRemote(
+    provider: ChartProvider,
+    tile: Tile,
+    timeoutMs: number = TILE_FETCH_TIMEOUT_MS
+  ): Promise<Buffer | null> {
+    const { buffer } = await ChartDownloader.fetchTileFromRemoteDetailed(
+      provider,
+      tile,
+      timeoutMs
+    )
+    return buffer
   }
 
   static async hasDiskSpace(path: string): Promise<boolean> {
@@ -571,5 +765,21 @@ export class ChartDownloader {
 
   static getStatistics() {
     return Object.fromEntries(ChartDownloader.CacheStatistics)
+  }
+
+  /**
+   * Reset the static fields owned by ChartDownloader. See
+   * ChartSeedingManager.resetForTests for why this exists.
+   */
+  static resetForTests(): void {
+    ChartDownloader.nextJobId = 1
+    ChartDownloader.CachingEnabled = true
+    ChartDownloader.CacheStatistics = new Map()
+    ChartDownloader.TilesCached = 0
+    ChartDownloader.lastDiskSpaceCheck = 0
+    ChartDownloader.lastDiskSpaceResult = true
+    // Skip the production 1.5s backoff for mocked-503 tests; production
+    // value is restored per the constant on plugin reload.
+    ChartDownloader.tileRetryBackoffMs = 0
   }
 }
