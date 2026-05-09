@@ -824,18 +824,122 @@ describe('tile cache HTTP endpoints', () => {
       .send({ sourceName: 'no-such-dir' })
     expect(post.status).to.equal(202)
     expect(post.body.provider).to.equal('proxy-test')
-    // Wait for the fire-and-forget walk to mark itself completed.
-    await wait(200)
-    const get = await request
-      .execute(`http://localhost:${serverPort(testServer)}`)
-      .get('/signalk/chart-tiles/cache/proxy-test/migrate')
-    expect(get.status).to.equal(200)
-    expect(get.body.state).to.equal('completed')
-    expect(get.body.counts).to.deep.equal({
+    // Poll for completion rather than sleeping a fixed budget. A real
+    // migration on a slow CI runner could exceed any single sleep
+    // duration; polling stays fast on the happy path. TEST-005.
+    const baseUrl = `http://localhost:${serverPort(testServer)}`
+    const deadline = Date.now() + 2000
+    let get: Awaited<ReturnType<ReturnType<typeof request.execute>['get']>>
+    do {
+      get = await request
+        .execute(baseUrl)
+        .get('/signalk/chart-tiles/cache/proxy-test/migrate')
+      if (get.body?.state !== 'running') break
+      await wait(20)
+    } while (Date.now() < deadline)
+    expect(get!.status).to.equal(200)
+    expect(get!.body.state).to.equal('completed')
+    expect(get!.body.counts).to.deep.equal({
       migrated: 0,
       skipped: 0,
       failed: 0
     })
+  })
+
+  it('POST /cache/:identifier/migrate returns 400 for a non-proxy provider with no working mbtiles', async () => {
+    // Same provider name but proxy:false → no working mbtiles handle is
+    // opened at startup. The migrate endpoint should reject with 400 and
+    // a message pointing at the misconfiguration. TEST-003.
+    const nonProxyProvider = {
+      ...proxyProvider,
+      proxy: false
+    }
+    await plugin.start({ onlineChartProviders: [nonProxyProvider] })
+    const res = await request
+      .execute(`http://localhost:${serverPort(testServer)}`)
+      .post('/signalk/chart-tiles/cache/proxy-test/migrate')
+      .send({})
+      .catch((e) => e.response)
+    expect(res.status).to.equal(400)
+    expect(res.text).to.match(/no working mbtiles cache/i)
+  })
+
+  it('POST /cache/:identifier/migrate returns 429 when re-fired inside the cooldown window', async () => {
+    // First POST kicks off a migration on a missing dir → completes
+    // immediately. A second POST inside the cooldown returns 429 with a
+    // Retry-After header. OPER-012 / TEST-003.
+    await plugin.start({ onlineChartProviders: [proxyProvider] })
+    const baseUrl = `http://localhost:${serverPort(testServer)}`
+    const first = await request
+      .execute(baseUrl)
+      .post('/signalk/chart-tiles/cache/proxy-test/migrate')
+      .send({ sourceName: 'no-such-dir' })
+    expect(first.status).to.equal(202)
+    // Poll for the first to finish.
+    const deadline = Date.now() + 2000
+    while (Date.now() < deadline) {
+      const status = await request
+        .execute(baseUrl)
+        .get('/signalk/chart-tiles/cache/proxy-test/migrate')
+      if (status.body?.state !== 'running') break
+      await wait(20)
+    }
+    const second = await request
+      .execute(baseUrl)
+      .post('/signalk/chart-tiles/cache/proxy-test/migrate')
+      .send({ sourceName: 'no-such-dir' })
+      .catch((e) => e.response)
+    expect(second.status).to.equal(429)
+    expect(second.headers['retry-after']).to.match(/^\d+$/)
+  })
+
+  it('POST /cache/jobs/:id action=stop transitions a Running job', async () => {
+    // TEST-004: stop sets cancelRequested; the seed worker observes it on
+    // its next tile dequeue and returns. A subsequent GET should reflect
+    // the cancelled state.
+    await plugin.start({ onlineChartProviders: [proxyProvider] })
+    const baseUrl = `http://localhost:${serverPort(testServer)}`
+    const create = await request
+      .execute(baseUrl)
+      .post('/signalk/chart-tiles/cache/proxy-test')
+      .send({
+        action: 'start',
+        maxZoom: '4',
+        bbox: { minLon: 0, minLat: 0, maxLon: 1, maxLat: 1 }
+      })
+    expect(create.status).to.equal(202)
+    const jobId = create.body.id
+    const stop = await request
+      .execute(baseUrl)
+      .post(`/signalk/chart-tiles/cache/jobs/${jobId}`)
+      .send({ action: 'stop' })
+    expect(stop.status).to.equal(200)
+  })
+
+  it('POST /cache/jobs/:id action=remove drops the job from the registry', async () => {
+    // TEST-004
+    await plugin.start({ onlineChartProviders: [proxyProvider] })
+    const baseUrl = `http://localhost:${serverPort(testServer)}`
+    const create = await request
+      .execute(baseUrl)
+      .post('/signalk/chart-tiles/cache/proxy-test')
+      .send({
+        action: 'start',
+        maxZoom: '4',
+        bbox: { minLon: 0, minLat: 0, maxLon: 1, maxLat: 1 }
+      })
+    const jobId = create.body.id
+    const remove = await request
+      .execute(baseUrl)
+      .post(`/signalk/chart-tiles/cache/jobs/${jobId}`)
+      .send({ action: 'remove' })
+    expect(remove.status).to.equal(200)
+    // GET /cache/jobs should no longer include the removed job.
+    const list = await request
+      .execute(baseUrl)
+      .get('/signalk/chart-tiles/cache/jobs')
+    const ids = (list.body as Array<{ id: number }>).map((j) => j.id)
+    expect(ids).to.not.include(jobId)
   })
 
   it('tokenProviders config registers a provider that appears in /resources/charts', async () => {

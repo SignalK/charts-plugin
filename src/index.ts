@@ -65,8 +65,11 @@ interface ChartProviderApp
 const chartTilesPath = '/signalk/chart-tiles'
 // Debounce window used to collapse FSWatcher bursts during rename / atomic-save
 // sequences into one reload. Overridable via env var so tests don't have to
-// wait the full 5s on every watcher assertion.
-const RELOAD_DEBOUNCE_MS =
+// wait the full 5s on every watcher assertion. Read at call time rather than
+// at module load: the env var assignment in plugin-test.ts runs after this
+// module's top-level imports execute, so a const captured at module load
+// would freeze in the 5s default. TEST-012.
+const reloadDebounceMs = (): number =>
   Number(process.env.SK_CHARTS_RELOAD_DEBOUNCE_MS) || 5000
 
 type SanitizedProvider = Record<string, unknown>
@@ -763,7 +766,7 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
         .finally(() => {
           loadInFlight = false
         })
-    }, RELOAD_DEBOUNCE_MS)
+    }, reloadDebounceMs())
   }
 
   const startWatchers = () => {
@@ -1041,6 +1044,14 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
           signal: controller.signal,
           onProgress: (counts) => {
             status.counts = { ...counts }
+            // Surface progress in the SignalK plugin list so an admin
+            // who started a multi-hour migration before bed can see it
+            // running on the dashboard without grepping logs. OPER-014.
+            const total = counts.migrated + counts.skipped + counts.failed
+            app.setPluginStatus(
+              `Migrating "${identifier}": ${counts.migrated} migrated, ` +
+                `${total} processed`
+            )
           }
         })
           .then((counts) => {
@@ -1052,6 +1063,11 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
                 `${counts.migrated} migrated, ${counts.skipped} skipped, ` +
                 `${counts.failed} failed`
             )
+            app.setPluginStatus(
+              `Migration for "${identifier}" ${status.state}: ` +
+                `${counts.migrated} migrated, ${counts.skipped} skipped, ` +
+                `${counts.failed} failed`
+            )
           })
           .catch((err: Error) => {
             status.state = 'failed'
@@ -1059,6 +1075,9 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
             status.error = err.message
             console.warn(
               `[charts-plugin] migration for "${identifier}" failed: ${err.message}`
+            )
+            app.setPluginStatus(
+              `Migration for "${identifier}" failed: ${err.message}`
             )
           })
         status.promise = promise

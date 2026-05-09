@@ -174,6 +174,30 @@ describe('TokenProvider: token TTL cache', () => {
       mock.restore()
     }
   })
+
+  it('refetches the token when the endpoint recovers from 5xx', async () => {
+    // After a 5xx, tokenExpiry stays at 0 (the catch swallows the error
+    // without setting it), so the next ensureFreshToken call triggers
+    // another fetch. Regression guard against a future change that
+    // accidentally sets tokenExpiry in the catch path. TEST-008.
+    let attempt = 0
+    const mock = installFetchMock(() => {
+      attempt++
+      return attempt === 1
+        ? jsonResponse({ err: 'down' }, 503)
+        : jsonResponse({ access: 'now-ok' })
+    })
+    try {
+      const dp = new TokenProvider({ ...BASE_CONFIG })
+      await dp.ensureFreshToken() // 503, swallowed
+      expect(dp.resolveUrl()).to.match(/t=$/) // empty token
+      await dp.ensureFreshToken() // 200, refetched
+      expect(dp.resolveUrl()).to.match(/t=now-ok$/)
+      expect(attempt).to.equal(2)
+    } finally {
+      mock.restore()
+    }
+  })
 })
 
 describe('TokenProvider: template substitution', () => {
@@ -262,6 +286,23 @@ describe('TokenProvider: validateTokenProviderConfig', () => {
   it('rejects missing identifier', () => {
     const bad = { ...BASE_CONFIG, identifier: '' }
     expect(() => validateTokenProviderConfig(bad, 0)).to.throw(/identifier/)
+  })
+
+  it('rejects an identifier with characters outside [A-Za-z0-9_-]', () => {
+    // PARA-005: identifier flows into URL paths and filenames; a slash or
+    // whitespace would produce malformed tile-route URLs even though the
+    // export-path guard catches the most obvious traversal.
+    const bad = { ...BASE_CONFIG, identifier: 'has/slash' }
+    expect(() => validateTokenProviderConfig(bad, 0)).to.throw(
+      /identifier .* must match/
+    )
+  })
+
+  it('rejects missing name', () => {
+    // TEST-011: symmetric to the identifier check; a future loosening of
+    // the validator should be caught here.
+    const bad = { ...BASE_CONFIG, name: '' }
+    expect(() => validateTokenProviderConfig(bad, 0)).to.throw(/name/)
   })
 
   it('rejects missing tokenEndpoint.url', () => {
@@ -380,6 +421,28 @@ describe('ChartDownloader.fetchTileFromRemote with a token provider', () => {
         tokenFetches,
         'second token fetch (invalidated, re-fetched)'
       ).to.equal(2)
+    } finally {
+      mock.restore()
+    }
+  })
+
+  it('invalidates the cached token when the upstream tile request 403s', async () => {
+    // Symmetry with the 401 path: 403 is the access-denied signal for
+    // Mapbox / several Esri tile services and should also trigger a
+    // refresh. TEST-007.
+    let tokenFetches = 0
+    const mock = installFetchMock((call) => {
+      if (call.url.startsWith('https://token.')) {
+        tokenFetches++
+        return jsonResponse({ access: `T${tokenFetches}` })
+      }
+      return new Response('', { status: 403 })
+    })
+    try {
+      const provider = chartProviderFromTokenConfig({ ...BASE_CONFIG })
+      await ChartDownloader.fetchTileFromRemote(provider, { x: 1, y: 2, z: 3 })
+      await ChartDownloader.fetchTileFromRemote(provider, { x: 1, y: 2, z: 3 })
+      expect(tokenFetches).to.equal(2)
     } finally {
       mock.restore()
     }

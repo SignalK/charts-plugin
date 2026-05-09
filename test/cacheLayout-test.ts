@@ -205,6 +205,39 @@ describe('cacheLayout: migrateLegacyCacheLayout', () => {
       fs.rmSync(tmp, { recursive: true, force: true })
     }
   })
+
+  it('export-side: continues when one rename fails and migrates the rest', async () => {
+    // TEST-009: paired test for the export-migration block. The proxy
+    // block has a per-file failure test above; the export block had no
+    // coverage. Pre-create exports/<name> as a directory so renaming a
+    // file onto that path errors with EISDIR/EEXIST, while the second
+    // file migrates cleanly.
+    const tmp = mkTmp()
+    try {
+      const oldDir = path.join(tmp, 'mbtiles')
+      fs.mkdirSync(oldDir)
+      const a = path.join(oldDir, 'first.mbtiles')
+      const b = path.join(oldDir, 'second.mbtiles')
+      fs.writeFileSync(a, 'A')
+      fs.writeFileSync(b, 'B')
+      // Block the rename of first.mbtiles by pre-creating its destination
+      // path as a directory.
+      const blocked = path.join(tmp, EXPORTS_DIR, 'first.mbtiles')
+      fs.mkdirSync(blocked, { recursive: true })
+
+      await migrateLegacyCacheLayout(tmp, silentApp)
+
+      // first.mbtiles couldn't move; should still be in the old location.
+      expect(fs.existsSync(a)).to.equal(true)
+      // second.mbtiles must have moved despite the first one's failure.
+      expect(fs.existsSync(b)).to.equal(false)
+      expect(
+        fs.existsSync(path.join(tmp, EXPORTS_DIR, 'second.mbtiles'))
+      ).to.equal(true)
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('cacheLayout: migrateLegacyTileCache', () => {

@@ -140,25 +140,52 @@ describe('chartDownloaderMBTilesHelpers: deleteTilesInChunks', () => {
 
   it('rolls back on a chunk failure and rethrows', async () => {
     const db = newDb()
-    insertTile(db, 4, 8, 0, 'id-0')
-    // Make the second chunk's run() throw by replacing prepare to return a
-    // statement that throws the second time it's run. Easier: pass a
-    // generator whose second yield is malformed (NaN) so the int-bound
-    // run() rejects.
-    function* tiles(): Generator<{ z: number; x: number; y: number }> {
-      yield { z: 4, x: 8, y: 0 }
-      // Forcing a throw cleanly is hard with sqlite's int coercion (it
-      // happily accepts NaN as 0). Test the rollback path indirectly by
-      // letting deleteTilesInChunks complete and verifying no transaction
-      // remains open: a follow-up write must succeed.
+    for (let y = 0; y < 6; y++) insertTile(db, 4, 8, y, `id-${y}`)
+
+    // Wrap db.prepare so the second prepared-run inside the loop throws.
+    // The first chunk (size 2 → 2 deletes) commits cleanly; the second
+    // chunk's run on the third tile throws, and deleteTilesInChunks must
+    // ROLLBACK + rethrow, leaving the second chunk's mid-progress writes
+    // reverted.
+    const realPrepare = db.prepare.bind(db)
+    let runCalls = 0
+    const failOnRunCall = 3 // 0,1 succeed in chunk 1; call 2 starts chunk 2; call 3 throws
+    db.prepare = (sql: string) => {
+      const stmt = realPrepare(sql)
+      const realRun = stmt.run.bind(stmt)
+      stmt.run = ((...args: unknown[]) => {
+        runCalls++
+        if (runCalls === failOnRunCall) {
+          throw new Error('simulated SQLITE_FULL')
+        }
+        return realRun(...(args as Parameters<typeof realRun>))
+      }) as typeof stmt.run
+      return stmt
     }
-    await deleteTilesInChunks(db, tiles(), 2)
-    // If a transaction had been left open under EXCLUSIVE locking, this
-    // INSERT would block / error.
+
+    function* tiles() {
+      for (let y = 0; y < 6; y++) yield { z: 4, x: 8, y }
+    }
+    let caught: Error | null = null
+    try {
+      await deleteTilesInChunks(db, tiles(), 2)
+    } catch (err) {
+      caught = err as Error
+    }
+    expect(caught, 'expected rethrow').to.not.equal(null)
+    expect(caught!.message).to.match(/SQLITE_FULL/)
+
+    // First chunk (y=0,1) committed → 2 fewer rows. Second chunk (y=2,3)
+    // started and threw on the first run; ROLLBACK reverts that chunk so
+    // the count is 6 - 2 = 4 (not 6 - 3).
+    expect(countMap(db), 'rollback should revert mid-chunk').to.equal(4)
+
+    // Restore prepare so the post-rollback INSERT works without throwing.
+    db.prepare = realPrepare
     db.exec(
       "INSERT INTO map (zoom_level, tile_column, tile_row, tile_id) VALUES (5, 0, 0, 'post')"
     )
-    expect(countMap(db)).to.equal(1)
+    expect(countMap(db)).to.equal(5)
   })
 })
 
