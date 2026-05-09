@@ -77,6 +77,7 @@ export interface ChartProvider {
   // to avoid a cycle between this module and src/tokenProvider.ts.
   _tokenProvider?: {
     ensureFreshToken: () => Promise<void>
+    invalidateToken: () => void
   }
   identifier: string
   name: string
