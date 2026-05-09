@@ -349,4 +349,52 @@ describe('ChartDownloader.fetchTileFromRemote with a token provider', () => {
       mock.restore()
     }
   })
+
+  it('invalidates the cached token when the upstream tile request 401s', async () => {
+    let tokenFetches = 0
+    const mock = installFetchMock((call) => {
+      if (call.url.startsWith('https://token.')) {
+        tokenFetches++
+        return jsonResponse({ access: `T${tokenFetches}` })
+      }
+      // Tile endpoint always 401s — simulates an expired/revoked token.
+      return new Response('', { status: 401 })
+    })
+    try {
+      const provider = chartProviderFromTokenConfig({ ...BASE_CONFIG })
+      // First fetch: token issued (T1), tile request 401s, token invalidated.
+      await ChartDownloader.fetchTileFromRemote(provider, { x: 1, y: 2, z: 3 })
+      expect(tokenFetches, 'first token fetch').to.equal(1)
+      // Second fetch: cached token would normally be reused (TTL 600s), but
+      // the 401 invalidated it, so a new token (T2) gets fetched.
+      await ChartDownloader.fetchTileFromRemote(provider, { x: 1, y: 2, z: 3 })
+      expect(
+        tokenFetches,
+        'second token fetch (invalidated, re-fetched)'
+      ).to.equal(2)
+    } finally {
+      mock.restore()
+    }
+  })
+
+  it('does not invalidate the token on a 5xx upstream', async () => {
+    let tokenFetches = 0
+    const mock = installFetchMock((call) => {
+      if (call.url.startsWith('https://token.')) {
+        tokenFetches++
+        return jsonResponse({ access: `T${tokenFetches}` })
+      }
+      return new Response('', { status: 503 })
+    })
+    try {
+      const provider = chartProviderFromTokenConfig({ ...BASE_CONFIG })
+      await ChartDownloader.fetchTileFromRemote(provider, { x: 1, y: 2, z: 3 })
+      await ChartDownloader.fetchTileFromRemote(provider, { x: 1, y: 2, z: 3 })
+      // 5xx isn't an auth failure; refetching the token wouldn't help, so
+      // we keep the cached one. One token fetch across the two tile calls.
+      expect(tokenFetches).to.equal(1)
+    } finally {
+      mock.restore()
+    }
+  })
 })

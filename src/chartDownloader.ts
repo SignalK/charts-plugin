@@ -528,6 +528,17 @@ export class ChartDownloader {
       // while the caller waited on arrayBuffer().
       clearTimeout(timeoutId)
       if (!response.ok) {
+        // For token providers, an upstream 401/403 most likely means the
+        // cached token has expired or been revoked. Invalidate so the next
+        // fetch refreshes it instead of hammering with the stale value.
+        // 5xx and other non-auth errors don't trigger this — they're not
+        // about credentials and refetching the token won't help.
+        if (
+          (response.status === 401 || response.status === 403) &&
+          provider._tokenProvider
+        ) {
+          provider._tokenProvider.invalidateToken()
+        }
         return null
       }
       const arrayBuffer = await response.arrayBuffer()

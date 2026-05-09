@@ -107,6 +107,22 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
   // here holds an `_tokenProvider` handle so the proxy fetch path can call
   // ensureFreshToken() before reading remoteUrl / headers.
   let activeTokenProviders: { [key: string]: ChartProvider } = {}
+
+  // Background-migration state per provider. POST /cache/:id/migrate kicks
+  // off a fire-and-forget walk and stores the running state here; GET on
+  // the same path reads it. Plugin-scoped so a stop()/start() cycle clears
+  // stale entries (which would otherwise show 'completed' for a provider
+  // that's no longer configured).
+  type MigrationStatus = {
+    state: 'running' | 'completed' | 'failed'
+    startedAt: number
+    completedAt?: number
+    legacyDir: string
+    deleteSource: boolean
+    counts: { migrated: number; skipped: number; failed: number }
+    error?: string
+  }
+  const migrationStatuses: Map<string, MigrationStatus> = new Map()
   // Last scan result, surfaced in the config schema description so the admin
   // UI shows per-path counts when the user reopens the plugin config. Issue #8.
   let lastChartPathCounts: ChartPathCount[] = []
@@ -572,31 +588,35 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
       return
     }
 
-    reconcileMbtilesHandles(chartProviders)
-    // Shallow assign is enough: newCharts and activeOnlineProviders both
-    // have unique ids per entry; the values themselves are used by reference.
-    chartProviders = { ...newCharts }
+    // Build the next chartProviders dict locally first so request handlers
+    // never see a half-populated state. Atomic publish at the end of the
+    // function keeps `_mbtilesHandle` invariants intact: a request reading
+    // chartProviders[id] for a proxy provider should always find a handle
+    // open, never a transient null between the dict-swap and the handle-open.
+    const nextChartProviders: { [key: string]: ChartProvider } = {
+      ...newCharts
+    }
     for (const [id, provider] of Object.entries(activeOnlineProviders)) {
-      if (chartProviders[id]) {
+      if (nextChartProviders[id]) {
         app.debug(
           `Online provider identifier "${id}" collides with a local chart; ` +
             `the online provider wins.`
         )
       }
-      chartProviders[id] = provider as ChartProvider
+      nextChartProviders[id] = provider as ChartProvider
     }
     // Token providers (declarative token-rotating configs) merge in last
     // and win over a colliding online or local entry: the admin took the
     // explicit step of configuring one, so a stale auto-discovered chart
     // shouldn't shadow it.
     for (const [id, provider] of Object.entries(activeTokenProviders)) {
-      if (chartProviders[id]) {
+      if (nextChartProviders[id]) {
         app.debug(
           `Token provider identifier "${id}" collides with another ` +
             `provider; the token provider wins.`
         )
       }
-      chartProviders[id] = provider
+      nextChartProviders[id] = provider
     }
 
     // Open / create the working mbtiles cache for every proxy provider.
@@ -604,7 +624,7 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
     // scanner so it isn't read-opened concurrently with our writes).
     // Failure to open doesn't take the provider out — tile requests will
     // just always go remote.
-    for (const provider of Object.values(chartProviders)) {
+    for (const provider of Object.values(nextChartProviders)) {
       if (provider.proxy === true) {
         try {
           provider._mbtilesHandle = await openOrCreateMbtiles(
@@ -620,6 +640,11 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
         }
       }
     }
+
+    // Now publish: close handles on the previous set we're replacing, then
+    // swap in the fully-populated next set in one assignment.
+    reconcileMbtilesHandles(chartProviders)
+    chartProviders = nextChartProviders
 
     buildSanitizedCache()
     app.setPluginStatus(
@@ -820,8 +845,9 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
     //   deleteSource  remove tile files after successful insert
     // Returns 202 immediately and runs the walk in the background — large
     // caches (>100k tiles) can take minutes and would time out a sync
-    // response. The migration is idempotent so the admin can re-run if
-    // they want to confirm completion.
+    // response. State is recorded in `migrationStatuses` so the admin can
+    // poll GET /cache/:id/migrate for progress and the final counts. The
+    // migration itself is idempotent so re-running is safe.
     app.post(
       `${chartTilesPath}/cache/:identifier/migrate`,
       async (req: Request<{ identifier: string }>, res: Response) => {
@@ -834,6 +860,15 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
             .send(
               `Provider "${identifier}" has no working mbtiles cache. ` +
                 `Configure proxy:true and ensure cachePath is writable.`
+            )
+        }
+        const existing = migrationStatuses.get(identifier)
+        if (existing && existing.state === 'running') {
+          return res
+            .status(409)
+            .send(
+              `Migration for "${identifier}" is already running. ` +
+                `Wait for it to complete or check GET /cache/${identifier}/migrate.`
             )
         }
         const body = (req.body ?? {}) as {
@@ -852,11 +887,29 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
         }
         const handle = provider._mbtilesHandle
         const deleteSource = body.deleteSource === true
-        // Fire and forget: log on completion / failure. Request returns
-        // immediately so a 30-minute migration doesn't tie up the HTTP
-        // socket.
-        migrateLegacyTileCache(legacyDir, handle, { deleteSource })
+        const status: MigrationStatus = {
+          state: 'running',
+          startedAt: Date.now(),
+          legacyDir,
+          deleteSource,
+          counts: { migrated: 0, skipped: 0, failed: 0 }
+        }
+        migrationStatuses.set(identifier, status)
+        // Fire and forget: log on completion / failure and update the
+        // shared status entry so GET ../migrate can surface progress.
+        // The onProgress callback updates counts every 500 processed
+        // entries, giving the admin a way to confirm forward progress
+        // without grepping logs.
+        migrateLegacyTileCache(legacyDir, handle, {
+          deleteSource,
+          onProgress: (counts) => {
+            status.counts = { ...counts }
+          }
+        })
           .then((counts) => {
+            status.counts = counts
+            status.state = 'completed'
+            status.completedAt = Date.now()
             app.debug(
               `Legacy migration for "${identifier}" done: ` +
                 `${counts.migrated} migrated, ${counts.skipped} skipped, ` +
@@ -864,6 +917,9 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
             )
           })
           .catch((err: Error) => {
+            status.state = 'failed'
+            status.completedAt = Date.now()
+            status.error = err.message
             app.debug(
               `Legacy migration for "${identifier}" failed: ${err.message}`
             )
@@ -874,6 +930,24 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
           legacyDir,
           deleteSource
         })
+      }
+    )
+
+    // Poll the state of a previously-started legacy migration. Returns 404
+    // if no migration has been kicked off for this provider in this plugin
+    // session — the state is plugin-scoped, so a stop()/start() cycle
+    // clears it.
+    app.get(
+      `${chartTilesPath}/cache/:identifier/migrate`,
+      (req: Request<{ identifier: string }>, res: Response) => {
+        const { identifier } = req.params
+        const status = migrationStatuses.get(identifier)
+        if (!status) {
+          return res
+            .status(404)
+            .send(`No migration recorded for "${identifier}" in this session.`)
+        }
+        return res.status(200).json({ provider: identifier, ...status })
       }
     )
 

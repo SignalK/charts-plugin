@@ -5,6 +5,7 @@
  */
 
 import fs from 'fs'
+import os from 'os'
 import path from 'path'
 import http from 'http'
 import * as _ from 'lodash'
@@ -691,6 +692,167 @@ describe('tile cache HTTP endpoints', () => {
       .catch((e) => e.response)
     expect(res.status).to.equal(400)
   })
+
+  it('GET /cache/stats returns a per-provider stats object', async () => {
+    await plugin.start({ onlineChartProviders: [proxyProvider] })
+    const res = await request
+      .execute(`http://localhost:${serverPort(testServer)}`)
+      .get('/signalk/chart-tiles/cache/stats')
+    expect(res.status).to.equal(200)
+    // Body shape is `{ <providerId>: { requests, hits, misses, failures } }`.
+    // Stats accumulate as tiles are fetched; an idle test just verifies the
+    // shape (object with expected keys per provider, or an empty {}).
+    expect(res.body).to.be.an('object')
+  })
+
+  it('GET /cache/regions returns an empty FeatureCollection when none saved', async () => {
+    await plugin.start({ onlineChartProviders: [proxyProvider] })
+    const res = await request
+      .execute(`http://localhost:${serverPort(testServer)}`)
+      .get('/signalk/chart-tiles/cache/regions')
+    expect(res.status).to.equal(200)
+    expect(res.body).to.deep.equal({
+      type: 'FeatureCollection',
+      features: []
+    })
+  })
+
+  it('POST /cache/regions persists a FeatureCollection that GET returns', async () => {
+    await plugin.start({ onlineChartProviders: [proxyProvider] })
+    const fc = {
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          properties: { name: 'baltic' },
+          geometry: {
+            type: 'Polygon',
+            coordinates: [
+              [
+                [10, 53],
+                [20, 53],
+                [20, 60],
+                [10, 60],
+                [10, 53]
+              ]
+            ]
+          }
+        }
+      ]
+    }
+    const post = await request
+      .execute(`http://localhost:${serverPort(testServer)}`)
+      .post('/signalk/chart-tiles/cache/regions')
+      .send(fc)
+    expect(post.status).to.equal(200)
+    const get = await request
+      .execute(`http://localhost:${serverPort(testServer)}`)
+      .get('/signalk/chart-tiles/cache/regions')
+    expect(get.body).to.deep.equal(fc)
+  })
+
+  it('POST /cache/jobs/:id with action=start returns 409 for a non-Idle job', async () => {
+    await plugin.start({ onlineChartProviders: [proxyProvider] })
+    const createRes = await request
+      .execute(`http://localhost:${serverPort(testServer)}`)
+      .post('/signalk/chart-tiles/cache/proxy-test')
+      .send({
+        action: 'start',
+        maxZoom: '4',
+        bbox: { minLon: 0, minLat: 0, maxLon: 1, maxLat: 1 }
+      })
+    expect(createRes.status).to.equal(202)
+    const jobId = createRes.body.id
+    // Wait briefly for the seed to actually complete (small bbox at z=4
+    // resolves to ~1 tile, the fake provider URL fails to fetch but the
+    // job still moves through Seeding -> Completed).
+    await wait(200)
+    const restart = await request
+      .execute(`http://localhost:${serverPort(testServer)}`)
+      .post(`/signalk/chart-tiles/cache/jobs/${jobId}`)
+      .send({ action: 'start' })
+      .catch((e) => e.response)
+    expect(restart.status).to.equal(409)
+  })
+
+  it('POST /cache/:identifier/migrate returns 404 for an unknown provider', async () => {
+    await plugin.start({ onlineChartProviders: [proxyProvider] })
+    const res = await request
+      .execute(`http://localhost:${serverPort(testServer)}`)
+      .post('/signalk/chart-tiles/cache/does-not-exist/migrate')
+      .send({})
+      .catch((e) => e.response)
+    expect(res.status).to.equal(404)
+  })
+
+  it('POST /cache/:identifier/migrate rejects ../ in sourceName', async () => {
+    await plugin.start({ onlineChartProviders: [proxyProvider] })
+    const res = await request
+      .execute(`http://localhost:${serverPort(testServer)}`)
+      .post('/signalk/chart-tiles/cache/proxy-test/migrate')
+      .send({ sourceName: '../escape' })
+      .catch((e) => e.response)
+    expect(res.status).to.equal(400)
+  })
+
+  it('GET /cache/:identifier/migrate returns 404 before migration is started', async () => {
+    await plugin.start({ onlineChartProviders: [proxyProvider] })
+    const res = await request
+      .execute(`http://localhost:${serverPort(testServer)}`)
+      .get('/signalk/chart-tiles/cache/proxy-test/migrate')
+      .catch((e) => e.response)
+    expect(res.status).to.equal(404)
+  })
+
+  it('POST then GET /cache/:identifier/migrate reports the recorded state', async () => {
+    await plugin.start({ onlineChartProviders: [proxyProvider] })
+    // Empty source dir is the simplest case: migration completes with
+    // zero counts immediately and we can read the resulting state.
+    const post = await request
+      .execute(`http://localhost:${serverPort(testServer)}`)
+      .post('/signalk/chart-tiles/cache/proxy-test/migrate')
+      .send({ sourceName: 'no-such-dir' })
+    expect(post.status).to.equal(202)
+    expect(post.body.provider).to.equal('proxy-test')
+    // Wait for the fire-and-forget walk to mark itself completed.
+    await wait(200)
+    const get = await request
+      .execute(`http://localhost:${serverPort(testServer)}`)
+      .get('/signalk/chart-tiles/cache/proxy-test/migrate')
+    expect(get.status).to.equal(200)
+    expect(get.body.state).to.equal('completed')
+    expect(get.body.counts).to.deep.equal({
+      migrated: 0,
+      skipped: 0,
+      failed: 0
+    })
+  })
+
+  it('tokenProviders config registers a provider that appears in /resources/charts', async () => {
+    // Verifies the config -> ChartProvider wiring without going to the
+    // network: the provider just needs to be discoverable as a chart.
+    await plugin.start({
+      tokenProviders: [
+        {
+          identifier: 'navionics',
+          name: 'Navionics',
+          tokenEndpoint: {
+            url: 'https://example.test/token',
+            method: 'GET',
+            ttlSeconds: 600
+          },
+          tile: {
+            url: 'https://example.test/{z}/{x}/{y}?t={token.access}'
+          }
+        }
+      ]
+    })
+    const res = await request
+      .execute(`http://localhost:${serverPort(testServer)}`)
+      .get('/signalk/v1/api/resources/charts')
+    expect(res.status).to.equal(200)
+    expect(res.body).to.have.property('navionics')
+  })
 })
 
 describe('tile helpers (Coordinate math)', () => {
@@ -772,6 +934,7 @@ interface TestApp extends express.Express {
   statusMessage: () => string
   setPluginStatus: (pluginId: string, status: string) => void
   setPluginError: (pluginId: string, status: string) => void
+  getDataDirPath: () => string
   lastPluginStatus?: string
 }
 
@@ -788,6 +951,11 @@ const createDefaultApp = (): Promise<{ app: TestApp; server: http.Server }> => {
     app.lastPluginStatus = status
   }) as unknown as TestApp['setPluginStatus']
   app.setPluginError = () => undefined
+  // Plugin uses this to locate regions.json. A scoped temp dir per app
+  // keeps tests from sharing state and lets the cleanup in afterEach
+  // reclaim disk.
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'charts-plugin-data-'))
+  app.getDataDirPath = () => dataDir
 
   return new Promise((resolve) => {
     const server = http.createServer(app)
