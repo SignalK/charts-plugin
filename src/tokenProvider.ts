@@ -41,6 +41,19 @@ function redactUrl(raw: string): string {
   }
 }
 
+// Injectable clock and RNG. Test code passes deterministic implementations
+// (TokenProvider.test ergonomics rather than mocking globals); production
+// uses real Date.now and Math.random by default. TEST-002.
+export interface TokenProviderClock {
+  now: () => number
+  rand: () => number
+}
+
+const DEFAULT_CLOCK: TokenProviderClock = {
+  now: () => Date.now(),
+  rand: () => Math.random()
+}
+
 export class TokenProvider {
   // Resolved token fields (string-valued only; non-strings from the JSON
   // response are dropped during fetchToken to keep template substitution
@@ -54,7 +67,10 @@ export class TokenProvider {
   // (which would all race to write `this.token`).
   private inFlight: Promise<void> | null = null
 
-  constructor(private config: TokenProviderConfig) {}
+  constructor(
+    private config: TokenProviderConfig,
+    private clock: TokenProviderClock = DEFAULT_CLOCK
+  ) {}
 
   /**
    * Refresh the cached token if it has expired. Safe to call on the hot
@@ -67,7 +83,7 @@ export class TokenProvider {
    * and the next request will re-attempt the refresh).
    */
   async ensureFreshToken(): Promise<void> {
-    if (Date.now() < this.tokenExpiry) return
+    if (this.clock.now() < this.tokenExpiry) return
     if (this.inFlight) return this.inFlight
     this.inFlight = this.fetchToken()
       .catch((err: Error) => {
@@ -114,7 +130,7 @@ export class TokenProvider {
       if (typeof v === 'string') next[k] = v
     }
     this.token = next
-    this.tokenExpiry = Date.now() + ep.ttlSeconds * 1000
+    this.tokenExpiry = this.clock.now() + ep.ttlSeconds * 1000
   }
 
   /**
@@ -150,7 +166,7 @@ export class TokenProvider {
         const a = parseInt(lo, 10)
         const b = parseInt(hi, 10)
         const span = b - a + 1
-        return String(a + Math.floor(Math.random() * span))
+        return String(a + Math.floor(this.clock.rand() * span))
       })
   }
 }

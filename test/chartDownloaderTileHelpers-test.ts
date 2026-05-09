@@ -300,4 +300,43 @@ describe('chartDownloaderTileHelpers: countTilesAdaptiveIterative', () => {
     }
     expect(countTilesAdaptiveIterative(fc, 3, 6)).to.equal(0)
   })
+
+  it('handles a polygon at the Web-Mercator latitude limit (~85.0511 degrees)', () => {
+    // TEST-010: lat=85.0 sits just inside the Web Mercator clip line.
+    // lonLatToTileXY produces finite tile indices here; the estimator
+    // should return a positive count without infinities or NaN.
+    const fc = polygonAroundBbox(0, 84.5, 1, 85.0)
+    const count = countTilesAdaptiveIterative(fc, 3, 6)
+    expect(Number.isFinite(count)).to.equal(true)
+    expect(count).to.be.greaterThan(0)
+  })
+
+  it('handles a degenerate (zero-area) polygon', () => {
+    // TEST-010: a point-shaped polygon. The estimator should not
+    // divide-by-zero or return non-finite.
+    const degenerate: FeatureCollection = {
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          properties: {},
+          geometry: {
+            type: 'Polygon',
+            coordinates: [
+              [
+                [10, 50],
+                [10, 50],
+                [10, 50],
+                [10, 50],
+                [10, 50]
+              ]
+            ]
+          }
+        }
+      ]
+    }
+    const count = countTilesAdaptiveIterative(degenerate, 3, 5)
+    expect(Number.isFinite(count)).to.equal(true)
+    expect(count).to.be.greaterThanOrEqual(0)
+  })
 })

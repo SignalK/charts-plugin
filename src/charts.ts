@@ -3,6 +3,7 @@ import { XMLParser } from 'fast-xml-parser'
 import { Dirent, promises as fs } from 'fs'
 import pLimit from 'p-limit'
 import { ChartProvider, MBTilesHandle, MBTilesMetadata } from './types'
+import { EXPORTS_DIR, WORKING_DIR } from './cacheLayout'
 
 // Parses tilemapresource.xml into a plain object. ignoreAttributes=false and
 // attributeNamePrefix='' drop the default '@_' prefix so XML attributes show
@@ -126,11 +127,12 @@ async function scanDir(
     // other internal artifacts. `exports/` holds region snapshots intended
     // for offline transfer (USB stick to another SK server) and is excluded
     // so the file isn't auto-picked-up while the user is preparing it. The
-    // dot-prefix is also a cross-platform "ignore me" convention.
+    // dot-prefix is also a cross-platform "ignore me" convention. Names
+    // imported from cacheLayout.ts so a future rename only changes one file.
     if (
       depth === 0 &&
-      (entry.name === '.working' ||
-        entry.name === 'exports' ||
+      (entry.name === WORKING_DIR ||
+        entry.name === EXPORTS_DIR ||
         entry.name.startsWith('.'))
     ) {
       continue
