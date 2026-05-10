@@ -826,7 +826,7 @@ describe('tile cache HTTP endpoints', () => {
     expect(post.body.provider).to.equal('proxy-test')
     // Poll for completion rather than sleeping a fixed budget. A real
     // migration on a slow CI runner could exceed any single sleep
-    // duration; polling stays fast on the happy path. TEST-005.
+    // duration; polling stays fast on the happy path.
     const baseUrl = `http://localhost:${serverPort(testServer)}`
     const deadline = Date.now() + 2000
     let get: Awaited<ReturnType<ReturnType<typeof request.execute>['get']>>
@@ -849,7 +849,7 @@ describe('tile cache HTTP endpoints', () => {
   it('POST /cache/:identifier/migrate returns 400 for a non-proxy provider with no working mbtiles', async () => {
     // Same provider name but proxy:false → no working mbtiles handle is
     // opened at startup. The migrate endpoint should reject with 400 and
-    // a message pointing at the misconfiguration. TEST-003.
+    // a message pointing at the misconfiguration.
     const nonProxyProvider = {
       ...proxyProvider,
       proxy: false
@@ -867,7 +867,7 @@ describe('tile cache HTTP endpoints', () => {
   it('POST /cache/:identifier/migrate returns 429 when re-fired inside the cooldown window', async () => {
     // First POST kicks off a migration on a missing dir → completes
     // immediately. A second POST inside the cooldown returns 429 with a
-    // Retry-After header. OPER-012 / TEST-003.
+    // Retry-After header.
     await plugin.start({ onlineChartProviders: [proxyProvider] })
     const baseUrl = `http://localhost:${serverPort(testServer)}`
     const first = await request
@@ -894,9 +894,9 @@ describe('tile cache HTTP endpoints', () => {
   })
 
   it('POST /cache/jobs/:id action=stop transitions a Running job', async () => {
-    // TEST-004: stop sets cancelRequested; the seed worker observes it on
-    // its next tile dequeue and returns. A subsequent GET should reflect
-    // the cancelled state.
+    // stop sets cancelRequested; the seed worker observes it on its next
+    // tile dequeue and returns. A subsequent GET should reflect the
+    // cancelled state.
     await plugin.start({ onlineChartProviders: [proxyProvider] })
     const baseUrl = `http://localhost:${serverPort(testServer)}`
     const create = await request
@@ -917,7 +917,6 @@ describe('tile cache HTTP endpoints', () => {
   })
 
   it('POST /cache/jobs/:id action=remove drops the job from the registry', async () => {
-    // TEST-004
     await plugin.start({ onlineChartProviders: [proxyProvider] })
     const baseUrl = `http://localhost:${serverPort(testServer)}`
     const create = await request

@@ -117,12 +117,11 @@ export interface OnlineChartProvider {
   layers: string[]
 }
 
-// Declarative token-provider config. Replaces the auto-imported `.js`
-// provider modules from earlier iterations: instead of executing arbitrary
-// Node code, the plugin fetches a token from a configured endpoint, caches
-// it for `ttlSeconds`, and templates the result into the tile URL and
-// headers per request. Covers the common case (rotating bearer tokens for
-// providers like Navionics) without code-execution risk.
+// Declarative token-provider config. The plugin fetches a token from a
+// configured endpoint, caches it for `ttlSeconds`, and templates the
+// result into the tile URL and headers per request. Covers the common
+// case of rotating bearer tokens (Navionics, ArcGIS, OAuth
+// client_credentials) without admin-supplied executable code.
 export interface TokenProviderConfig {
   identifier: string
   name: string

@@ -64,11 +64,11 @@ async function loadMBTiles() {
 // Symlinks are skipped and the depth is bounded so a misplaced config entry
 // can't send the scan into node_modules or a symlink loop. File parsing
 // (openMbtilesFile / directoryToMapInfo) runs concurrently under a global
-// limiter — 500 MBTiles opened serially on a Pi SD card was a 5-30s startup stall.
-// `.js` files are intentionally NOT scanned: providers that need
-// runtime-computed URLs (rotating bearer tokens etc.) are configured
-// declaratively via `tokenProviders` in plugin settings (see
-// src/tokenProvider.ts).
+// limiter — 500 MBTiles opened serially on a Pi SD card produces a 5-30s
+// startup stall.
+// Only mbtiles files and tile-format directories are recognised. Providers
+// that need runtime-computed URLs are configured declaratively via
+// `tokenProviders` in plugin settings (see src/tokenProvider.ts).
 const MAX_SCAN_DEPTH = 8
 const PARSE_CONCURRENCY = 12
 
@@ -123,12 +123,11 @@ async function scanDir(
     if (entry.isSymbolicLink()) continue
     // Plugin-managed directories that share the cache root with chart paths.
     // `.working/` holds proxy-cache mbtiles being written to by the
-    // ChartDownloader (must not be opened read-only by the scanner) and any
-    // other internal artifacts. `exports/` holds region snapshots intended
-    // for offline transfer (USB stick to another SK server) and is excluded
-    // so the file isn't auto-picked-up while the user is preparing it. The
-    // dot-prefix is also a cross-platform "ignore me" convention. Names
-    // imported from cacheLayout.ts so a future rename only changes one file.
+    // ChartDownloader (must not be opened read-only by the scanner).
+    // `exports/` holds region snapshots intended for offline transfer
+    // (USB stick to another SK server) and is excluded so the file
+    // isn't auto-picked-up while the user is preparing it. The
+    // dot-prefix is also a cross-platform "ignore me" convention.
     if (
       depth === 0 &&
       (entry.name === WORKING_DIR ||
