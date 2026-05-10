@@ -1,23 +1,16 @@
 /**
  * Declarative token-based chart providers.
  *
- * Replaces the auto-imported `.js` chart-provider modules from the early
- * iterations of PR #49. Those modules executed arbitrary Node code at
- * startup with full server privileges; a malicious or buggy module dropped
- * into the chart directory would have full filesystem and network access.
+ * Providers that need runtime-computed URLs (Navionics, ArcGIS-style key
+ * rotation, OAuth client_credentials) typically just need: fetch a
+ * token from a known URL, cache it for some TTL, template it into the
+ * tile URL and request headers. That shape is expressed here as JSON
+ * config — no executable code, no admin-supplied modules.
  *
- * The vast majority of providers that need runtime-computed URLs
- * (Navionics, ArcGIS-style key rotation, OAuth client_credentials) only
- * need: fetch a token from a known URL, cache it for some TTL, template
- * it into the tile URL and request headers. That shape is expressible as
- * JSON config — no code execution required, no review burden on the
- * plugin maintainers, and no TOS exposure for SignalK if the user is
- * talking to a provider whose terms forbid third-party clients.
- *
- * Providers that need request signing or HMAC are not covered here and
- * stay out of scope; if those become a real demand later, the right
- * answer is a sandboxed extension point (worker_threads with a fixed
- * message API), not unrestricted .js loading.
+ * Providers that need request signing or HMAC are out of scope; the
+ * right answer for those is a sandboxed extension point
+ * (worker_threads with a fixed message API), not arbitrary code
+ * execution.
  */
 
 import { ChartProvider, TokenProviderConfig } from './types'
@@ -42,8 +35,8 @@ function redactUrl(raw: string): string {
 }
 
 // Injectable clock and RNG. Test code passes deterministic implementations
-// (TokenProvider.test ergonomics rather than mocking globals); production
-// uses real Date.now and Math.random by default. TEST-002.
+// rather than mocking globals; production uses real Date.now and
+// Math.random by default.
 export interface TokenProviderClock {
   now: () => number
   rand: () => number
@@ -235,7 +228,7 @@ export function chartProviderFromTokenConfig(
 // (~tilePath~/{id}/...), and chartProviders dict keys; an identifier
 // containing slashes, dots, or whitespace produces malformed URLs and
 // confused-deputy lookups, even though the export-path traversal is
-// caught downstream. Defensive check at the validator. PARA-005.
+// caught downstream. Defensive check at the validator.
 const IDENTIFIER_RE = /^[A-Za-z0-9_-]+$/
 
 export function validateTokenProviderConfig(

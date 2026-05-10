@@ -179,7 +179,7 @@ describe('TokenProvider: token TTL cache', () => {
     // After a 5xx, tokenExpiry stays at 0 (the catch swallows the error
     // without setting it), so the next ensureFreshToken call triggers
     // another fetch. Regression guard against a future change that
-    // accidentally sets tokenExpiry in the catch path. TEST-008.
+    // accidentally sets tokenExpiry in the catch path.
     let attempt = 0
     const mock = installFetchMock(() => {
       attempt++
@@ -289,7 +289,7 @@ describe('TokenProvider: validateTokenProviderConfig', () => {
   })
 
   it('rejects an identifier with characters outside [A-Za-z0-9_-]', () => {
-    // PARA-005: identifier flows into URL paths and filenames; a slash or
+    // identifier flows into URL paths and filenames; a slash or
     // whitespace would produce malformed tile-route URLs even though the
     // export-path guard catches the most obvious traversal.
     const bad = { ...BASE_CONFIG, identifier: 'has/slash' }
@@ -299,8 +299,8 @@ describe('TokenProvider: validateTokenProviderConfig', () => {
   })
 
   it('rejects missing name', () => {
-    // TEST-011: symmetric to the identifier check; a future loosening of
-    // the validator should be caught here.
+    // Symmetric to the identifier check; a future loosening of the
+    // validator should be caught here.
     const bad = { ...BASE_CONFIG, name: '' }
     expect(() => validateTokenProviderConfig(bad, 0)).to.throw(/name/)
   })
@@ -429,7 +429,7 @@ describe('ChartDownloader.fetchTileFromRemote with a token provider', () => {
   it('invalidates the cached token when the upstream tile request 403s', async () => {
     // Symmetry with the 401 path: 403 is the access-denied signal for
     // Mapbox / several Esri tile services and should also trigger a
-    // refresh. TEST-007.
+    // refresh.
     let tokenFetches = 0
     const mock = installFetchMock((call) => {
       if (call.url.startsWith('https://token.')) {

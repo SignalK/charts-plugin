@@ -119,10 +119,10 @@ export const serveTileFromFilesystem = (
     _filePath,
     `${z}/${x}/${_flipY ? flippedY : y}.${normalizedFormat}`
   )
-  // sendFile already performs the stat and handles the error; the previous
-  // stat+access probe duplicated that work on every tile request. Its
-  // callback fires once per request with an err only when something went
-  // wrong (missing file, permission denied, header-already-sent aborts).
+  // sendFile performs its own stat + dotfile / range / etag handling and
+  // calls the completion callback once with an err only when something
+  // went wrong (missing file, permission denied, header-already-sent
+  // aborts). No need for a separate stat probe before sendFile.
   res.sendFile(file, responseHttpOptions, (err) => {
     if (!err) return
     const code = (err as NodeJS.ErrnoException).code

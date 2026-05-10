@@ -12,11 +12,9 @@
  * depth 0, plus any dot-prefixed entry. Anything else under `cachePath` is
  * treated as a user chart and read-opened.
  *
- * Pre-restructure proxy files lived at `${cachePath}/${id}.mbtiles_` (the
- * trailing underscore evaded the scanner's `\.mbtiles$` regex). Pre-restructure
- * region snapshots lived at `${cachePath}/mbtiles/${name}_${id}.mbtiles` and
- * were caught by the scanner, locking them open and breaking re-seeding.
- * `migrateLegacyCacheLayout()` moves both into the new layout on startup.
+ * `migrateLegacyCacheLayout()` is run once per startup to move any
+ * flat-layout proxy files (`<id>.mbtiles_`) and the older `mbtiles/`
+ * subdirectory of region snapshots into the layout above.
  */
 
 import path from 'path'
@@ -48,20 +46,21 @@ export function exportMbtilesPath(
 }
 
 /**
- * One-time migration of pre-restructure layouts to the new directory shape.
- * Idempotent: re-running after success is a no-op. Failures on individual
- * files are logged and skipped so a partial migration doesn't take the plugin
- * out — the next startup will retry.
+ * Move any flat-layout proxy / export files into the .working/ and
+ * exports/ subdirs the scanner expects. Idempotent: re-running after
+ * success is a no-op. Failures on individual files are logged and
+ * skipped so a partial migration doesn't take the plugin out — the next
+ * startup retries.
  *
  * Migrates:
- *   ${cachePath}/${id}.mbtiles_                       -> .working/${id}/cache.mbtiles
- *   ${cachePath}/mbtiles/${name}_${id}.mbtiles        -> exports/${name}_${id}.mbtiles
+ *   ${cachePath}/${id}.mbtiles_                  ->  .working/${id}/cache.mbtiles
+ *   ${cachePath}/mbtiles/${name}_${id}.mbtiles   ->  exports/${name}_${id}.mbtiles
  */
 export async function migrateLegacyCacheLayout(
   cachePath: string,
   app: { debug: (msg: string) => void }
 ): Promise<void> {
-  // Pre-restructure proxy files (.mbtiles_ trailing underscore).
+  // Flat-layout proxy files (.mbtiles_ trailing underscore).
   let entries: import('fs').Dirent[]
   try {
     entries = await fs.readdir(cachePath, { withFileTypes: true })
@@ -85,7 +84,7 @@ export async function migrateLegacyCacheLayout(
     }
   }
 
-  // Pre-restructure region-snapshot directory (cachePath/mbtiles/).
+  // Flat-layout region-snapshot directory (cachePath/mbtiles/).
   const oldExportDir = path.join(cachePath, 'mbtiles')
   let oldExports: import('fs').Dirent[] = []
   try {
@@ -94,7 +93,7 @@ export async function migrateLegacyCacheLayout(
     // ENOENT: legacy dir doesn't exist, nothing to migrate. Any other
     // error (EACCES, EBUSY, EIO) means the dir might exist but we
     // couldn't read it — surface that so the admin sees half-migrated
-    // state instead of a silent skip. OPER-007.
+    // state instead of a silent skip.
     const code = (err as NodeJS.ErrnoException).code
     if (code !== 'ENOENT') {
       console.warn(
@@ -143,14 +142,14 @@ export interface LegacyMigrationCounts {
 const TILE_EXTENSION = /\.(png|jpe?g|webp|pbf|mvt)$/i
 
 /**
- * Walk a pre-restructure flat-file tile cache (the master-branch layout
- * before this PR), `<root>/<z>/<x>/<y>.<ext>`, and insert each tile into
- * the provider's working mbtiles via the standard putTile callback API.
+ * Walk a flat-file tile cache rooted at `legacyDir`,
+ * `<root>/<z>/<x>/<y>.<ext>`, and insert each tile into the provider's
+ * working mbtiles via the standard putTile callback API.
  *
  * Idempotent: re-running after partial failure picks up where the last
  * run left off (mbtiles' INSERT OR IGNORE-style write makes duplicate
  * inserts cheap). `deleteSource: true` removes successfully migrated
- * files so the legacy directory drains over time; the directory itself
+ * files so the source directory drains over time; the directory itself
  * is left in place even when empty (admin tooling can rmdir later).
  *
  * Failures on individual tiles are counted and the walk continues:
@@ -165,7 +164,7 @@ export async function migrateLegacyTileCache(
     // Cooperative cancellation. Migration walks check this between tile
     // operations; on abort the walk stops cleanly and returns the
     // partial counts. Used by plugin.stop() to halt a multi-hour walk
-    // before closing the mbtiles handle (OPER-002).
+    // before closing the mbtiles handle.
     signal?: AbortSignal
   } = {}
 ): Promise<LegacyMigrationCounts> {

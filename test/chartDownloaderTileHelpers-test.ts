@@ -302,7 +302,7 @@ describe('chartDownloaderTileHelpers: countTilesAdaptiveIterative', () => {
   })
 
   it('handles a polygon at the Web-Mercator latitude limit (~85.0511 degrees)', () => {
-    // TEST-010: lat=85.0 sits just inside the Web Mercator clip line.
+    // lat=85.0 sits just inside the Web Mercator clip line.
     // lonLatToTileXY produces finite tile indices here; the estimator
     // should return a positive count without infinities or NaN.
     const fc = polygonAroundBbox(0, 84.5, 1, 85.0)
@@ -312,8 +312,8 @@ describe('chartDownloaderTileHelpers: countTilesAdaptiveIterative', () => {
   })
 
   it('handles a degenerate (zero-area) polygon', () => {
-    // TEST-010: a point-shaped polygon. The estimator should not
-    // divide-by-zero or return non-finite.
+    // A point-shaped polygon. The estimator should not divide-by-zero
+    // or return non-finite.
     const degenerate: FeatureCollection = {
       type: 'FeatureCollection',
       features: [

@@ -47,8 +47,7 @@ interface Config {
   cachePath: string
   onlineChartProviders: OnlineChartProvider[]
   // Declarative token-based providers: token-endpoint + tile-template
-  // configs that resolve at fetch time. Replaces the auto-imported `.js`
-  // providers dropped in favour of a code-execution-free design.
+  // configs that resolve at fetch time.
   tokenProviders?: TokenProviderConfig[]
 }
 
@@ -66,9 +65,8 @@ const chartTilesPath = '/signalk/chart-tiles'
 // Debounce window used to collapse FSWatcher bursts during rename / atomic-save
 // sequences into one reload. Overridable via env var so tests don't have to
 // wait the full 5s on every watcher assertion. Read at call time rather than
-// at module load: the env var assignment in plugin-test.ts runs after this
-// module's top-level imports execute, so a const captured at module load
-// would freeze in the 5s default. TEST-012.
+// captured at module load so a test can set the env var after importing this
+// module.
 const reloadDebounceMs = (): number =>
   Number(process.env.SK_CHARTS_RELOAD_DEBOUNCE_MS) || 5000
 
@@ -88,7 +86,6 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
   // the plugin currently running" — flipped to true at the end of
   // doStartup, false at the start of stop(). Watcher reloads check the
   // latter so a queued reload from before stop() is harmless after stop().
-  // OPER-008.
   let pluginActive = false
   let providerRegistered = false
   let props: Config = {
@@ -134,18 +131,18 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
     error?: string
     // AbortController bound to a running migration. plugin.stop() aborts
     // these so a multi-hour walk doesn't keep writing to a closed mbtiles
-    // handle (OPER-002). Tracked promise lets stop() await graceful exit
-    // before closing handles.
+    // handle. Tracked promise lets stop() await graceful exit before
+    // closing handles.
     controller?: AbortController
     promise?: Promise<void>
   }
   const migrationStatuses: Map<string, MigrationStatus> = new Map()
   // Cooldown after a migration completes — protects against an admin
-  // client polling `migrate` and re-firing on completion (OPER-012).
-  // Re-running before the cooldown returns 429.
+  // client polling `migrate` and re-firing on completion. Re-running
+  // before the cooldown returns 429.
   const MIGRATION_COOLDOWN_MS = 60_000
   // Last scan result, surfaced in the config schema description so the admin
-  // UI shows per-path counts when the user reopens the plugin config. Issue #8.
+  // UI shows per-path counts when the user reopens the plugin config.
   let lastChartPathCounts: ChartPathCount[] = []
 
   // Check Node version for schema
@@ -154,7 +151,7 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
 
   // Builds the `chartPaths` description, appending the latest per-path chart
   // counts when available. The admin UI re-fetches the schema every time the
-  // plugin config page opens, so this text refreshes on reload. Issue #8.
+  // plugin config page opens, so this text refreshes on reload.
   const chartPathsDescription = () => {
     const base = `Add one or more paths to find charts. Defaults to "${defaultChartsPath}"`
     if (lastChartPathCounts.length === 0) return base
@@ -429,7 +426,7 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
       // keeps calling putTile against a handle we're about to close —
       // every call errors-and-counts-as-failed for thousands of remaining
       // tiles, and a quick restart can race the orphan loop against a
-      // freshly opened connection on the same file. OPER-002.
+      // freshly opened connection on the same file.
       for (const status of migrationStatuses.values()) {
         if (status.state === 'running') status.controller?.abort()
       }
@@ -476,7 +473,8 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
     if (cachePath !== defaultChartsPath) {
       await ensureDirectoryExists(cachePath)
     }
-    // Move pre-restructure files into the new layout. Idempotent and
+    // Migrate any flat-layout proxy / export files into the .working/
+    // and exports/ subdirs the scanner expects. Idempotent and
     // failure-tolerant: a file we can't move is logged and the rest carry on.
     await migrateLegacyCacheLayout(cachePath, app)
 
@@ -737,8 +735,8 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
   // atomic-save sequences; the debounce collapses a burst into one reload.
   // Set while loadChartProviders is running so a watcher event during a
   // reload doesn't kick off a parallel one. Combined with the debounce
-  // and the pluginStarted check, this means at most one
-  // loadChartProviders is in-flight at a time. OPER-008.
+  // and the pluginActive check, this means at most one
+  // loadChartProviders is in-flight at a time.
   let loadInFlight = false
 
   const scheduleReload = () => {
@@ -749,7 +747,7 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
       // queues a reload, then the admin disables the plugin during the
       // debounce window. Without this check the reload fires after stop()
       // has cleared chartProviders, opens fresh mbtiles handles, and the
-      // next stop() doesn't know about them. OPER-008.
+      // next stop() doesn't know about them.
       if (!pluginActive) return
       if (loadInFlight) {
         // Reschedule rather than drop: the in-flight reload may have
@@ -874,14 +872,13 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
     // Hard cap on the persisted regions.json size. The webapp posts the
     // full FeatureCollection on every save; allowing arbitrary growth
     // would let an admin (or a misbehaving client) fill the data dir.
-    // PARA-006.
     const MAX_REGIONS_BYTES = 1024 * 1024 // 1 MB; thousands of detailed polygons
     app.post(
       `${chartTilesPath}/cache/regions`,
       async (req: Request, res: Response) => {
         // Validate the body shape: we expect a GeoJSON FeatureCollection.
         // Without this, anything JSON-shaped lands in regions.json and
-        // breaks the GET handler / the webapp on next read. PARA-004.
+        // breaks the GET handler / the webapp on next read.
         const body = req.body as unknown
         if (
           typeof body !== 'object' ||
@@ -901,7 +898,7 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
         }
         // Async write so a slow SD card on a Pi doesn't stall the event
         // loop, and a try/catch so an EACCES / ENOSPC produces a useful
-        // 500 instead of an uncaught throw. OPER-013.
+        // 500 instead of an uncaught throw.
         const p = path.join(app.getDataDirPath(), 'regions.json')
         try {
           await fs.promises.writeFile(p, serialised, 'utf8')
@@ -936,8 +933,8 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
       return res.json(data)
     })
 
-    // Migrate the pre-PR per-file PNG cache for a provider into its working
-    // mbtiles. Body fields (all optional):
+    // Migrate a per-file PNG cache (`<sourceName>/<z>/<x>/<y>.<ext>`) into
+    // the provider's working mbtiles. Body fields (all optional):
     //   sourceName    legacy directory name (default: provider.name)
     //   deleteSource  remove tile files after successful insert
     // Returns 202 immediately and runs the walk in the background — large
@@ -970,7 +967,7 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
         }
         // Cooldown after completion: a flapping admin client polling
         // GET .../migrate and re-firing on completion would otherwise
-        // walk the directory continuously. OPER-012.
+        // walk the directory continuously.
         if (
           existing &&
           existing.state !== 'running' &&
@@ -1010,7 +1007,7 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
         // `/var/lib/sk/charts` + sourceName `../charts-shared` resolves
         // to `/var/lib/sk/charts-shared` which startsWith `/var/lib/sk/charts`).
         // Require the resolved path to equal cachePath OR start with
-        // `cachePath + sep`. PARA-001.
+        // `cachePath + sep`.
         const cacheBase = path.resolve(cachePath)
         if (
           legacyDir !== cacheBase &&
@@ -1046,7 +1043,7 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
             status.counts = { ...counts }
             // Surface progress in the SignalK plugin list so an admin
             // who started a multi-hour migration before bed can see it
-            // running on the dashboard without grepping logs. OPER-014.
+            // running on the dashboard without grepping logs.
             const total = counts.migrated + counts.skipped + counts.failed
             app.setPluginStatus(
               `Migrating "${identifier}": ${counts.migrated} migrated, ` +
@@ -1212,11 +1209,10 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
         if (action === 'start') {
           // Reject restart of jobs that already ran. seedCache itself is a
           // no-op while Running, but a Completed (or Cancelled) job would
-          // happily reset its counters and run again — which the UI hides
-          // but the endpoint used to accept. The admin should remove the
-          // completed job and create a fresh one to refresh tiles, so the
-          // intent is explicit and doesn't get lost in a counter reset.
-          // Issue #11.
+          // happily reset its counters and run again. The admin should
+          // remove the completed job and create a fresh one to refresh
+          // tiles, so the intent is explicit and doesn't get lost in a
+          // counter reset.
           if (job.info().status !== 'Idle') {
             return res
               .status(409)
@@ -1373,15 +1369,15 @@ const convertOnlineProviderConfig = (provider: OnlineChartProvider) => {
 // Builds the outward-facing view of a provider for either the v1 or v2 API.
 // Copies non-private top-level fields, then overlays the version-specific
 // block (v1 has tilemapUrl/chartLayers, v2 has url/layers), rewriting the
-// tile-path placeholder. Intentionally a single shallow walk — the previous
-// implementation did three deep clones per call and ran per metadata request.
-// Strip HTML / script-injection vectors from mbtiles name and description
-// fields before they cross the API boundary. The webapp's Leaflet
-// L.Control.Layers writes these into innerHTML — a malicious .mbtiles
-// shared via USB stick or forum could ship a metadata.name like
-// `<img src=x onerror="..."> ` and execute in the admin's session.
-// Server-side sanitisation lets the (vendored) UI keep its current
-// rendering path without per-call escaping. PARA-002.
+// tile-path placeholder. Intentionally a single shallow walk to keep
+// per-metadata-request cost bounded.
+//
+// `name` and `description` go through stripHtml first: the webapp's
+// Leaflet L.Control.Layers writes them into innerHTML, so a malicious
+// .mbtiles shipping a metadata.name like
+// `<img src=x onerror="..."> ` would execute in the admin's session.
+// Server-side sanitisation lets the (vendored) UI keep its rendering
+// path without per-call escaping.
 const stripHtml = (s: string): string =>
   s
     // Drop tags entirely. We don't try to preserve any HTML — this is
