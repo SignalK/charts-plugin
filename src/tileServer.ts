@@ -119,10 +119,10 @@ export const serveTileFromFilesystem = (
     _filePath,
     `${z}/${x}/${_flipY ? flippedY : y}.${normalizedFormat}`
   )
-  // sendFile already performs the stat and handles the error; the previous
-  // stat+access probe duplicated that work on every tile request. Its
-  // callback fires once per request with an err only when something went
-  // wrong (missing file, permission denied, header-already-sent aborts).
+  // sendFile performs its own stat + dotfile / range / etag handling and
+  // calls the completion callback once with an err only when something
+  // went wrong (missing file, permission denied, header-already-sent
+  // aborts). No need for a separate stat probe before sendFile.
   res.sendFile(file, responseHttpOptions, (err) => {
     if (!err) return
     const code = (err as NodeJS.ErrnoException).code
@@ -199,15 +199,15 @@ export const serveTileFromCacheOrRemote = async (
   x: number,
   y: number
 ) => {
-  const buffer = await ChartDownloader.getTileFromCacheOrRemote(
+  const tile = await ChartDownloader.getTileFromCacheOrRemote(
     cachePath,
     provider,
     { x, y, z }
   )
-  if (!buffer) {
+  if (!tile.buffer) {
     res.sendStatus(502)
     return
   }
   res.set('Content-Type', `image/${provider.format}`)
-  res.send(buffer)
+  res.send(tile.buffer)
 }

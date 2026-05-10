@@ -4,8 +4,27 @@ import * as _ from 'lodash'
 import { findCharts } from './charts'
 import { apiRoutePrefix } from './constants'
 import { composeStatus, ChartPathCount } from './pluginStatus'
-import { ChartProvider, MBTilesHandle, OnlineChartProvider } from './types'
-import { ChartSeedingManager, Tile } from './chartDownloader'
+import {
+  ChartProvider,
+  MBTilesHandle,
+  OnlineChartProvider,
+  TokenProviderConfig
+} from './types'
+import {
+  ChartSeedingManager,
+  ChartDownloader,
+  JobOptions
+} from './chartDownloader'
+import { openOrCreateMbtiles } from './chartDownloaderMBTilesHelpers'
+import {
+  chartProviderFromTokenConfig,
+  validateTokenProviderConfig
+} from './tokenProvider'
+import {
+  migrateLegacyCacheLayout,
+  migrateLegacyTileCache,
+  workingMbtilesPath
+} from './cacheLayout'
 import {
   MAX_ZOOM,
   MIN_ZOOM,
@@ -27,6 +46,9 @@ interface Config {
   chartPaths: string[]
   cachePath: string
   onlineChartProviders: OnlineChartProvider[]
+  // Declarative token-based providers: token-endpoint + tile-template
+  // configs that resolve at fetch time.
+  tokenProviders?: TokenProviderConfig[]
 }
 
 interface ChartProviderApp
@@ -42,8 +64,10 @@ interface ChartProviderApp
 const chartTilesPath = '/signalk/chart-tiles'
 // Debounce window used to collapse FSWatcher bursts during rename / atomic-save
 // sequences into one reload. Overridable via env var so tests don't have to
-// wait the full 5s on every watcher assertion.
-const RELOAD_DEBOUNCE_MS =
+// wait the full 5s on every watcher assertion. Read at call time rather than
+// captured at module load so a test can set the env var after importing this
+// module.
+const reloadDebounceMs = (): number =>
   Number(process.env.SK_CHARTS_RELOAD_DEBOUNCE_MS) || 5000
 
 type SanitizedProvider = Record<string, unknown>
@@ -56,6 +80,13 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
   let sanitizedV1: { [key: string]: SanitizedProvider } = {}
   let sanitizedV2: { [key: string]: SanitizedProvider } = {}
   let pluginStarted = false
+  // pluginStarted vs pluginActive: pluginStarted is "registerRoutes has run"
+  // (sticky for the lifetime of the plugin closure — Express routes
+  // shouldn't double-register on a stop/start cycle). pluginActive is "is
+  // the plugin currently running" — flipped to true at the end of
+  // doStartup, false at the start of stop(). Watcher reloads check the
+  // latter so a queued reload from before stop() is harmless after stop().
+  let pluginActive = false
   let providerRegistered = false
   let props: Config = {
     chartPaths: [],
@@ -79,8 +110,39 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
   let reloadTimer: NodeJS.Timeout | undefined
   let activeChartPaths: string[] = []
   let activeOnlineProviders: { [key: string]: object } = {}
+  // Built from props.tokenProviders during doStartup; merged into
+  // chartProviders alongside the online providers. The ChartProvider value
+  // here holds an `_tokenProvider` handle so the proxy fetch path can call
+  // ensureFreshToken() before reading remoteUrl / headers.
+  let activeTokenProviders: { [key: string]: ChartProvider } = {}
+
+  // Background-migration state per provider. POST /cache/:id/migrate kicks
+  // off a fire-and-forget walk and stores the running state here; GET on
+  // the same path reads it. Plugin-scoped so a stop()/start() cycle clears
+  // stale entries (which would otherwise show 'completed' for a provider
+  // that's no longer configured).
+  type MigrationStatus = {
+    state: 'running' | 'completed' | 'failed' | 'cancelled'
+    startedAt: number
+    completedAt?: number
+    legacyDir: string
+    deleteSource: boolean
+    counts: { migrated: number; skipped: number; failed: number }
+    error?: string
+    // AbortController bound to a running migration. plugin.stop() aborts
+    // these so a multi-hour walk doesn't keep writing to a closed mbtiles
+    // handle. Tracked promise lets stop() await graceful exit before
+    // closing handles.
+    controller?: AbortController
+    promise?: Promise<void>
+  }
+  const migrationStatuses: Map<string, MigrationStatus> = new Map()
+  // Cooldown after a migration completes — protects against an admin
+  // client polling `migrate` and re-firing on completion. Re-running
+  // before the cooldown returns 429.
+  const MIGRATION_COOLDOWN_MS = 60_000
   // Last scan result, surfaced in the config schema description so the admin
-  // UI shows per-path counts when the user reopens the plugin config. Issue #8.
+  // UI shows per-path counts when the user reopens the plugin config.
   let lastChartPathCounts: ChartPathCount[] = []
 
   // Check Node version for schema
@@ -89,7 +151,7 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
 
   // Builds the `chartPaths` description, appending the latest per-path chart
   // counts when available. The admin UI re-fetches the schema every time the
-  // plugin config page opens, so this text refreshes on reload. Issue #8.
+  // plugin config page opens, so this text refreshes on reload.
   const chartPathsDescription = () => {
     const base = `Add one or more paths to find charts. Defaults to "${defaultChartsPath}"`
     if (lastChartPathCounts.length === 0) return base
@@ -180,9 +242,9 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
               type: 'string',
               title: 'Format',
               default: 'png',
-              enum: ['png', 'jpg', 'pbf'],
+              enum: ['png', 'jpg', 'pbf', 'mvt', 'webp'],
               description:
-                'Format of map tiles: raster (png, jpg, etc.) / vector (pbf).'
+                'Format of map tiles: raster (png, jpg, webp, etc.) / vector (pbf, mvt).'
             },
             url: {
               type: 'string',
@@ -194,7 +256,7 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
               type: 'boolean',
               title: 'Proxy through signalk server',
               description:
-                'Create a proxy to serve remote tiles and cache fetched tiles from the remote server, to serve them locally on subsequent requests. Use webapp to configure seeding jobs to prefetch tiles to local cache.',
+                'Create a proxy to serve remote tiles and cache fetched tiles from the remote server, to serve them locally on subsequent requests. Use webapp to configure seeding jobs to prefetch tiles to local cache. Only meaningful for tilelayer / WMS / WMTS providers; mapstyleJSON and tileJSON providers describe style/source manifests and have no per-tile cache to seed.',
               default: false
             },
             headers: {
@@ -228,6 +290,109 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
             }
           }
         }
+      },
+      tokenProviders: {
+        type: 'array',
+        title: 'Token providers',
+        description:
+          'Declarative configs for chart providers that need a token ' +
+          'fetched from a separate URL. The token is cached for ttlSeconds ' +
+          'and templated into the tile URL/headers as {token.<field>}. ' +
+          'Use {a-b} in URLs for sharded hostnames (random integer in [a,b]).',
+        items: {
+          type: 'object',
+          title: 'Token provider',
+          required: ['identifier', 'name', 'tokenEndpoint', 'tile'],
+          properties: {
+            identifier: {
+              type: 'string',
+              title: 'Identifier',
+              description:
+                'Stable ID used in tile URLs (URL-safe; e.g. "navionics").'
+            },
+            name: { type: 'string', title: 'Name' },
+            description: { type: 'string', title: 'Description' },
+            type: {
+              type: 'string',
+              title: 'Map source type',
+              default: 'tilelayer',
+              enum: ['tilelayer', 'WMTS']
+            },
+            format: {
+              type: 'string',
+              title: 'Format',
+              default: 'png',
+              enum: ['png', 'jpg', 'webp', 'pbf', 'mvt']
+            },
+            scale: { type: 'number', title: 'Scale', default: 250000 },
+            minzoom: {
+              type: 'number',
+              title: 'Min zoom',
+              minimum: MIN_ZOOM,
+              maximum: MAX_ZOOM
+            },
+            maxzoom: {
+              type: 'number',
+              title: 'Max zoom',
+              minimum: MIN_ZOOM,
+              maximum: MAX_ZOOM
+            },
+            bounds: {
+              type: 'array',
+              title: 'Bounds [minLon, minLat, maxLon, maxLat]',
+              items: { type: 'number' },
+              minItems: 4,
+              maxItems: 4
+            },
+            tokenEndpoint: {
+              type: 'object',
+              title: 'Token endpoint',
+              required: ['url', 'ttlSeconds'],
+              properties: {
+                url: { type: 'string', title: 'URL' },
+                method: {
+                  type: 'string',
+                  title: 'Method',
+                  default: 'GET',
+                  enum: ['GET', 'POST']
+                },
+                headers: {
+                  type: 'object',
+                  title: 'Request headers',
+                  additionalProperties: { type: 'string' }
+                },
+                body: { type: 'string', title: 'Request body' },
+                ttlSeconds: {
+                  type: 'number',
+                  title: 'TTL (seconds)',
+                  description:
+                    'How long a fetched token is reused before re-fetching.',
+                  minimum: 1
+                }
+              }
+            },
+            tile: {
+              type: 'object',
+              title: 'Tile request template',
+              required: ['url'],
+              properties: {
+                url: {
+                  type: 'string',
+                  title: 'URL template',
+                  description:
+                    'Tile URL with {z}/{x}/{y}, {token.<field>}, and {a-b}.'
+                },
+                headers: {
+                  type: 'object',
+                  title: 'Request headers',
+                  description:
+                    'Header template (values may reference {token.<field>}).',
+                  additionalProperties: { type: 'string' }
+                }
+              }
+            }
+          }
+        }
       }
     }
   })
@@ -252,10 +417,19 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
           Object.keys(chartProviders).length
         } provider(s) will be released)`
       )
+      pluginActive = false
       stopWatchers()
       // Cancel any running seeding jobs so a disabled plugin doesn't keep
       // pulling tiles from remote providers in the background.
       ChartSeedingManager.cancelAll()
+      // Cancel any in-flight legacy migration. Without this, the walk
+      // keeps calling putTile against a handle we're about to close —
+      // every call errors-and-counts-as-failed for thousands of remaining
+      // tiles, and a quick restart can race the orphan loop against a
+      // freshly opened connection on the same file.
+      for (const status of migrationStatuses.values()) {
+        if (status.state === 'running') status.controller?.abort()
+      }
       // Close open SQLite connections so the user can move or delete chart
       // files while the plugin is stopped (Windows blocks deletion on open
       // handles). Restart re-opens fresh via findCharts.
@@ -299,6 +473,10 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
     if (cachePath !== defaultChartsPath) {
       await ensureDirectoryExists(cachePath)
     }
+    // Migrate any flat-layout proxy / export files into the .working/
+    // and exports/ subdirs the scanner expects. Idempotent and
+    // failure-tolerant: a file we can't move is logged and the rest carry on.
+    await migrateLegacyCacheLayout(cachePath, app)
 
     activeOnlineProviders = {}
     for (const data of props.onlineChartProviders ?? []) {
@@ -312,10 +490,32 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
       }
       activeOnlineProviders[provider.identifier] = provider
     }
+
+    // Build token providers. A bad config entry shouldn't take the whole
+    // plugin out — log and skip the offender so the rest still load.
+    activeTokenProviders = {}
+    for (let i = 0; i < (props.tokenProviders ?? []).length; i++) {
+      const raw = (props.tokenProviders ?? [])[i]
+      try {
+        const cfg = validateTokenProviderConfig(raw, i)
+        const provider = chartProviderFromTokenConfig(cfg)
+        if (activeTokenProviders[provider.identifier]) {
+          app.debug(
+            `Duplicate token provider identifier "${provider.identifier}"; ` +
+              `the later entry wins. Rename one to avoid the collision.`
+          )
+        }
+        activeTokenProviders[provider.identifier] = provider
+      } catch (err) {
+        console.warn(`Skipping ${(err as Error).message}`)
+      }
+    }
+
     app.debug(
       `Start charts plugin. Chart paths: ${activeChartPaths.join(
         ', '
-      )}, online charts: ${Object.keys(activeOnlineProviders).length}`
+      )}, online charts: ${Object.keys(activeOnlineProviders).length}, ` +
+        `token providers: ${Object.keys(activeTokenProviders).length}`
     )
 
     // Routes and the v2 provider registration are idempotent — Signal K can
@@ -323,6 +523,7 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
     // either throw or duplicate the handler.
     if (!pluginStarted) registerRoutes()
     pluginStarted = true
+    pluginActive = true
     if (serverMajorVersion === 2 && !providerRegistered) {
       app.debug('** Registering v2 API paths **')
       registerAsProvider()
@@ -416,19 +617,64 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
       return
     }
 
-    reconcileMbtilesHandles(chartProviders)
-    // Shallow assign is enough: newCharts and activeOnlineProviders both
-    // have unique ids per entry; the values themselves are used by reference.
-    chartProviders = { ...newCharts }
+    // Build the next chartProviders dict locally first so request handlers
+    // never see a half-populated state. Atomic publish at the end of the
+    // function keeps `_mbtilesHandle` invariants intact: a request reading
+    // chartProviders[id] for a proxy provider should always find a handle
+    // open, never a transient null between the dict-swap and the handle-open.
+    const nextChartProviders: { [key: string]: ChartProvider } = {
+      ...newCharts
+    }
     for (const [id, provider] of Object.entries(activeOnlineProviders)) {
-      if (chartProviders[id]) {
+      if (nextChartProviders[id]) {
         app.debug(
           `Online provider identifier "${id}" collides with a local chart; ` +
             `the online provider wins.`
         )
       }
-      chartProviders[id] = provider as ChartProvider
+      nextChartProviders[id] = provider as ChartProvider
     }
+    // Token providers (declarative token-rotating configs) merge in last
+    // and win over a colliding online or local entry: the admin took the
+    // explicit step of configuring one, so a stale auto-discovered chart
+    // shouldn't shadow it.
+    for (const [id, provider] of Object.entries(activeTokenProviders)) {
+      if (nextChartProviders[id]) {
+        app.debug(
+          `Token provider identifier "${id}" collides with another ` +
+            `provider; the token provider wins.`
+        )
+      }
+      nextChartProviders[id] = provider
+    }
+
+    // Open / create the working mbtiles cache for every proxy provider.
+    // Path lives under `.working/<id>/cache.mbtiles` (excluded from the
+    // scanner so it isn't read-opened concurrently with our writes).
+    // Failure to open doesn't take the provider out — tile requests will
+    // just always go remote.
+    for (const provider of Object.values(nextChartProviders)) {
+      if (provider.proxy === true) {
+        try {
+          provider._mbtilesHandle = await openOrCreateMbtiles(
+            workingMbtilesPath(cachePath, provider.identifier),
+            provider
+          )
+        } catch (err) {
+          app.debug(
+            `Could not open mbtiles cache for ${provider.identifier}: ${
+              (err as Error).message
+            }`
+          )
+        }
+      }
+    }
+
+    // Now publish: close handles on the previous set we're replacing, then
+    // swap in the fully-populated next set in one assignment.
+    reconcileMbtilesHandles(chartProviders)
+    chartProviders = nextChartProviders
+
     buildSanitizedCache()
     app.setPluginStatus(
       composeStatus(perPath, Object.keys(activeOnlineProviders).length)
@@ -459,6 +705,13 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
     [key: string]: ChartProvider
   }) => {
     for (const old of Object.values(oldSet)) {
+      // Skip providers that were only in the old set if they were proxy providers
+      //  we want to keep serving tiles from their existing mbtiles handle until
+      // the new one is ready, and a missing handle means the new config failed
+      // to open the file, so there's no new handle to wait for.
+      if (old.proxy === true) {
+        continue
+      }
       if (old?._mbtilesHandle) {
         const handle = old._mbtilesHandle
         setTimeout(() => closeMbtilesHandle(handle), MBTILES_CLOSE_DELAY_MS)
@@ -480,13 +733,38 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
   // Chart folders are watched so new/renamed/deleted files become visible
   // without a plugin restart. FSWatcher bursts events during rename and
   // atomic-save sequences; the debounce collapses a burst into one reload.
+  // Set while loadChartProviders is running so a watcher event during a
+  // reload doesn't kick off a parallel one. Combined with the debounce
+  // and the pluginActive check, this means at most one
+  // loadChartProviders is in-flight at a time.
+  let loadInFlight = false
+
   const scheduleReload = () => {
     if (reloadTimer) clearTimeout(reloadTimer)
     reloadTimer = setTimeout(() => {
       reloadTimer = undefined
+      // Guards against the stop()-during-debounce race: a watcher event
+      // queues a reload, then the admin disables the plugin during the
+      // debounce window. Without this check the reload fires after stop()
+      // has cleared chartProviders, opens fresh mbtiles handles, and the
+      // next stop() doesn't know about them.
+      if (!pluginActive) return
+      if (loadInFlight) {
+        // Reschedule rather than drop: the in-flight reload may have
+        // captured pre-event state.
+        scheduleReload()
+        return
+      }
       app.debug('Reloading charts after filesystem change')
+      loadInFlight = true
       loadChartProviders()
-    }, RELOAD_DEBOUNCE_MS)
+        .catch((e) =>
+          console.warn(`[charts-plugin] reload failed: ${(e as Error).message}`)
+        )
+        .finally(() => {
+          loadInFlight = false
+        })
+    }, reloadDebounceMs())
   }
 
   const startWatchers = () => {
@@ -591,6 +869,242 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
       }
     )
 
+    // Hard cap on the persisted regions.json size. The webapp posts the
+    // full FeatureCollection on every save; allowing arbitrary growth
+    // would let an admin (or a misbehaving client) fill the data dir.
+    const MAX_REGIONS_BYTES = 1024 * 1024 // 1 MB; thousands of detailed polygons
+    app.post(
+      `${chartTilesPath}/cache/regions`,
+      async (req: Request, res: Response) => {
+        // Validate the body shape: we expect a GeoJSON FeatureCollection.
+        // Without this, anything JSON-shaped lands in regions.json and
+        // breaks the GET handler / the webapp on next read.
+        const body = req.body as unknown
+        if (
+          typeof body !== 'object' ||
+          body === null ||
+          (body as { type?: unknown }).type !== 'FeatureCollection' ||
+          !Array.isArray((body as { features?: unknown }).features)
+        ) {
+          return res
+            .status(400)
+            .send('expected a GeoJSON FeatureCollection with a features array')
+        }
+        const serialised = JSON.stringify(body, null, 2)
+        if (Buffer.byteLength(serialised, 'utf8') > MAX_REGIONS_BYTES) {
+          return res
+            .status(413)
+            .send(`regions payload exceeds ${MAX_REGIONS_BYTES} bytes`)
+        }
+        // Async write so a slow SD card on a Pi doesn't stall the event
+        // loop, and a try/catch so an EACCES / ENOSPC produces a useful
+        // 500 instead of an uncaught throw.
+        const p = path.join(app.getDataDirPath(), 'regions.json')
+        try {
+          await fs.promises.writeFile(p, serialised, 'utf8')
+        } catch (err) {
+          console.warn(
+            `[charts-plugin] failed to write ${p}: ${(err as Error).message}`
+          )
+          return res
+            .status(500)
+            .send(`failed to persist regions: ${(err as Error).message}`)
+        }
+        return res.send({ status: 'ok' })
+      }
+    )
+
+    app.get(
+      `${chartTilesPath}/cache/regions`,
+      async (_req: Request, res: Response) => {
+        const p = path.join(app.getDataDirPath(), 'regions.json')
+        try {
+          const raw = await fs.promises.readFile(p, 'utf8')
+          const data = JSON.parse(raw)
+          return res.json(data)
+        } catch (_e) {
+          return res.json({ type: 'FeatureCollection', features: [] })
+        }
+      }
+    )
+
+    app.get(`${chartTilesPath}/cache/stats`, (_req, res) => {
+      const data = ChartDownloader.getStatistics()
+      return res.json(data)
+    })
+
+    // Migrate a per-file PNG cache (`<sourceName>/<z>/<x>/<y>.<ext>`) into
+    // the provider's working mbtiles. Body fields (all optional):
+    //   sourceName    legacy directory name (default: provider.name)
+    //   deleteSource  remove tile files after successful insert
+    // Returns 202 immediately and runs the walk in the background — large
+    // caches (>100k tiles) can take minutes and would time out a sync
+    // response. State is recorded in `migrationStatuses` so the admin can
+    // poll GET /cache/:id/migrate for progress and the final counts. The
+    // migration itself is idempotent so re-running is safe.
+    app.post(
+      `${chartTilesPath}/cache/:identifier/migrate`,
+      async (req: Request<{ identifier: string }>, res: Response) => {
+        const { identifier } = req.params
+        const provider = chartProviders[identifier]
+        if (!provider) return res.status(404).send('Provider not found')
+        if (!provider._mbtilesHandle) {
+          return res
+            .status(400)
+            .send(
+              `Provider "${identifier}" has no working mbtiles cache. ` +
+                `Configure proxy:true and ensure cachePath is writable.`
+            )
+        }
+        const existing = migrationStatuses.get(identifier)
+        if (existing && existing.state === 'running') {
+          return res
+            .status(409)
+            .send(
+              `Migration for "${identifier}" is already running. ` +
+                `Wait for it to complete or check GET /cache/${identifier}/migrate.`
+            )
+        }
+        // Cooldown after completion: a flapping admin client polling
+        // GET .../migrate and re-firing on completion would otherwise
+        // walk the directory continuously.
+        if (
+          existing &&
+          existing.state !== 'running' &&
+          existing.completedAt &&
+          Date.now() - existing.completedAt < MIGRATION_COOLDOWN_MS
+        ) {
+          return res
+            .status(429)
+            .header(
+              'Retry-After',
+              String(
+                Math.ceil(
+                  (MIGRATION_COOLDOWN_MS -
+                    (Date.now() - existing.completedAt)) /
+                    1000
+                )
+              )
+            )
+            .send(
+              `Migration for "${identifier}" recently ${existing.state}; ` +
+                `wait ${Math.ceil(MIGRATION_COOLDOWN_MS / 1000)}s before re-running. ` +
+                `Previous result: ${JSON.stringify(existing.counts)}`
+            )
+        }
+        const body = (req.body ?? {}) as {
+          sourceName?: string
+          deleteSource?: boolean
+        }
+        const sourceName =
+          typeof body.sourceName === 'string' && body.sourceName.length > 0
+            ? body.sourceName
+            : provider.name
+        const legacyDir = path.resolve(cachePath, sourceName)
+        // path.resolve guards against `../` escape, but a naive prefix
+        // startsWith check has a false-negative when a sibling directory
+        // happens to share the cachePath prefix (e.g. cachePath
+        // `/var/lib/sk/charts` + sourceName `../charts-shared` resolves
+        // to `/var/lib/sk/charts-shared` which startsWith `/var/lib/sk/charts`).
+        // Require the resolved path to equal cachePath OR start with
+        // `cachePath + sep`.
+        const cacheBase = path.resolve(cachePath)
+        if (
+          legacyDir !== cacheBase &&
+          !legacyDir.startsWith(cacheBase + path.sep)
+        ) {
+          return res.status(400).send('sourceName must not escape cachePath')
+        }
+        const handle = provider._mbtilesHandle
+        const deleteSource = body.deleteSource === true
+        const controller = new AbortController()
+        const status: MigrationStatus = {
+          state: 'running',
+          startedAt: Date.now(),
+          legacyDir,
+          deleteSource,
+          counts: { migrated: 0, skipped: 0, failed: 0 },
+          controller
+        }
+        migrationStatuses.set(identifier, status)
+        console.log(
+          `[charts-plugin] migration for "${identifier}" started ` +
+            `legacyDir=${legacyDir} deleteSource=${deleteSource}`
+        )
+        // Fire and forget: log on completion / failure and update the
+        // shared status entry so GET ../migrate can surface progress.
+        // The onProgress callback updates counts every 500 processed
+        // entries, giving the admin a way to confirm forward progress
+        // without grepping logs.
+        const promise = migrateLegacyTileCache(legacyDir, handle, {
+          deleteSource,
+          signal: controller.signal,
+          onProgress: (counts) => {
+            status.counts = { ...counts }
+            // Surface progress in the SignalK plugin list so an admin
+            // who started a multi-hour migration before bed can see it
+            // running on the dashboard without grepping logs.
+            const total = counts.migrated + counts.skipped + counts.failed
+            app.setPluginStatus(
+              `Migrating "${identifier}": ${counts.migrated} migrated, ` +
+                `${total} processed`
+            )
+          }
+        })
+          .then((counts) => {
+            status.counts = counts
+            status.state = controller.signal.aborted ? 'cancelled' : 'completed'
+            status.completedAt = Date.now()
+            console.log(
+              `[charts-plugin] migration for "${identifier}" ${status.state}: ` +
+                `${counts.migrated} migrated, ${counts.skipped} skipped, ` +
+                `${counts.failed} failed`
+            )
+            app.setPluginStatus(
+              `Migration for "${identifier}" ${status.state}: ` +
+                `${counts.migrated} migrated, ${counts.skipped} skipped, ` +
+                `${counts.failed} failed`
+            )
+          })
+          .catch((err: Error) => {
+            status.state = 'failed'
+            status.completedAt = Date.now()
+            status.error = err.message
+            console.warn(
+              `[charts-plugin] migration for "${identifier}" failed: ${err.message}`
+            )
+            app.setPluginStatus(
+              `Migration for "${identifier}" failed: ${err.message}`
+            )
+          })
+        status.promise = promise
+        return res.status(202).json({
+          status: 'started',
+          provider: identifier,
+          legacyDir,
+          deleteSource
+        })
+      }
+    )
+
+    // Poll the state of a previously-started legacy migration. Returns 404
+    // if no migration has been kicked off for this provider in this plugin
+    // session — the state is plugin-scoped, so a stop()/start() cycle
+    // clears it.
+    app.get(
+      `${chartTilesPath}/cache/:identifier/migrate`,
+      (req: Request<{ identifier: string }>, res: Response) => {
+        const { identifier } = req.params
+        const status = migrationStatuses.get(identifier)
+        if (!status) {
+          return res
+            .status(404)
+            .send(`No migration recorded for "${identifier}" in this session.`)
+        }
+        return res.status(200).json({ provider: identifier, ...status })
+      }
+    )
+
     app.post(
       `${chartTilesPath}/cache/:identifier`,
       async (req: Request<{ identifier: string }>, res: Response) => {
@@ -598,17 +1112,20 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
         if (!identifier) {
           return res.sendStatus(404)
         }
-        const { regionGUID, tile, bbox, maxZoom } = req.body as {
-          regionGUID?: string
-          tile?: Tile // query params come in as strings
-          bbox?: {
-            minLon: number
-            minLat: number
-            maxLon: number
-            maxLat: number
+        const { feature, bbox, minZoom, maxZoom, action, options } =
+          req.body as {
+            feature?: GeoJSON.Feature<GeoJSON.Geometry>
+            bbox?: {
+              minLon: number
+              minLat: number
+              maxLon: number
+              maxLat: number
+            }
+            minZoom?: string
+            maxZoom?: string
+            action?: string
+            options?: JobOptions
           }
-          maxZoom?: string
-        }
         const provider = chartProviders[identifier]
         if (!provider) {
           return res.status(404).send('Provider not found')
@@ -616,15 +1133,17 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
         if (!maxZoom) {
           return res.status(400).send('maxZoom parameter is required')
         }
-        if (!regionGUID && !bbox && !tile) {
-          return res
-            .status(400)
-            .send('Request must include regionGUID, bbox, or tile')
+        if (!feature && !bbox) {
+          return res.status(400).send('Request must include feature or bbox')
         }
+        const minZoomParsed = parseInt(minZoom ?? '1')
         const maxZoomParsed = parseInt(maxZoom)
-        const zoomError = validateMaxZoom(maxZoomParsed)
-        if (zoomError) {
-          return res.status(400).send(zoomError)
+        const maxZoomError = validateMaxZoom(maxZoomParsed)
+        if (maxZoomError) {
+          return res.status(400).send(maxZoomError)
+        }
+        if (Number.isFinite(minZoomParsed) && validateMaxZoom(minZoomParsed)) {
+          return res.status(400).send(`Invalid minZoom ${minZoomParsed}`)
         }
         if (bbox) {
           const bboxError = validateBBox(bbox)
@@ -632,24 +1151,23 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
             return res.status(400).send(bboxError)
           }
         }
-        if (tile) {
-          const tileError = validateTileCoords(tile.z, tile.x, tile.y)
-          if (tileError) {
-            return res.status(400).send(tileError)
-          }
-        }
         try {
           const job = await ChartSeedingManager.createJob(
-            app.resourcesApi,
             cachePath,
             provider,
+            options ?? { refetch: false, mbtiles: false, vacuum: false },
+            minZoomParsed,
             maxZoomParsed,
-            regionGUID,
+            feature,
             bbox
               ? [bbox.minLon, bbox.minLat, bbox.maxLon, bbox.maxLat]
-              : undefined,
-            tile
+              : undefined
           )
+          if (action === 'start') {
+            job.seedCache()
+          } else if (action === 'delete') {
+            job.deleteCache()
+          }
           // Job is registered and its tile set is known, but nothing has been
           // downloaded yet — the caller starts it with
           // POST /cache/jobs/:id { action: 'start' }.
@@ -689,12 +1207,29 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
           return res.status(400).send('action parameter is required')
         }
         if (action === 'start') {
+          // Reject restart of jobs that already ran. seedCache itself is a
+          // no-op while Running, but a Completed (or Cancelled) job would
+          // happily reset its counters and run again. The admin should
+          // remove the completed job and create a fresh one to refresh
+          // tiles, so the intent is explicit and doesn't get lost in a
+          // counter reset.
+          if (job.info().status !== 'Idle') {
+            return res
+              .status(409)
+              .send(
+                `Job ${parsedId} cannot be started (status: ${job.info().status}). ` +
+                  `Remove and recreate the job to seed again.`
+              )
+          }
           job.seedCache()
         } else if (action === 'stop') {
           job.cancelJob()
         } else if (action === 'delete') {
           job.deleteCache()
         } else if (action === 'remove') {
+          // Cancel first so an in-flight seed doesn't mutate the entry
+          // after we drop it from the registry.
+          job.cancelJob()
           delete ChartSeedingManager.ActiveJobs[parsedId]
         } else {
           return res.status(400).send(`Unknown action: ${action}`)
@@ -834,8 +1369,24 @@ const convertOnlineProviderConfig = (provider: OnlineChartProvider) => {
 // Builds the outward-facing view of a provider for either the v1 or v2 API.
 // Copies non-private top-level fields, then overlays the version-specific
 // block (v1 has tilemapUrl/chartLayers, v2 has url/layers), rewriting the
-// tile-path placeholder. Intentionally a single shallow walk — the previous
-// implementation did three deep clones per call and ran per metadata request.
+// tile-path placeholder. Intentionally a single shallow walk to keep
+// per-metadata-request cost bounded.
+//
+// `name` and `description` go through stripHtml first: the webapp's
+// Leaflet L.Control.Layers writes them into innerHTML, so a malicious
+// .mbtiles shipping a metadata.name like
+// `<img src=x onerror="..."> ` would execute in the admin's session.
+// Server-side sanitisation lets the (vendored) UI keep its rendering
+// path without per-call escaping.
+const stripHtml = (s: string): string =>
+  s
+    // Drop tags entirely. We don't try to preserve any HTML — this is
+    // chart metadata from a SQLite blob, not rich text.
+    .replace(/<[^>]*>/g, '')
+    // Belt-and-braces: collapse any standalone & < > so an unbalanced
+    // input doesn't produce something the browser still treats as markup.
+    .replace(/[<>]/g, '')
+
 const sanitizeProvider = (
   provider: ChartProvider,
   version: 1 | 2 = 1
@@ -843,7 +1394,16 @@ const sanitizeProvider = (
   const out: SanitizedProvider = {}
   for (const [key, value] of Object.entries(provider)) {
     if (key.startsWith('_') || key === 'v1' || key === 'v2') continue
-    out[key] = value
+    // Defang any string field that the webapp might later render via
+    // innerHTML (Leaflet L.Control.Layers, custom tooltips, etc).
+    if (
+      (key === 'name' || key === 'description') &&
+      typeof value === 'string'
+    ) {
+      out[key] = stripHtml(value)
+    } else {
+      out[key] = value
+    }
   }
   const v = version === 1 ? provider.v1 : provider.v2
   if (v) {

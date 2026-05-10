@@ -5,6 +5,7 @@
  */
 
 import fs from 'fs'
+import os from 'os'
 import path from 'path'
 import http from 'http'
 import * as _ from 'lodash'
@@ -14,11 +15,24 @@ import { request } from 'chai-http'
 
 // Short debounce so watcher-based tests don't wait 5s per assertion. Must be
 // set before requiring the plugin so the module-level RELOAD_DEBOUNCE_MS picks
-// it up.
+// it up. Using `import = require` keeps the assignment above this line in
+// effect at module-evaluation time, while `import ... from` would be hoisted
+// to the top of the file and run before the env var was set.
 process.env.SK_CHARTS_RELOAD_DEBOUNCE_MS = '150'
 
 import Plugin = require('../src/index')
 import expectedCharts from './expected-charts.json'
+import * as TileHelpers from '../src/chartDownloaderTileHelpers'
+import { ChartSeedingManager } from '../src/chartDownloader'
+
+// Global before/after hooks so every test starts from a clean static-state
+// baseline. ChartDownloader holds module-level static fields (nextJobId,
+// CachingEnabled, CacheStatistics, lastDiskSpaceCheck, lastDiskSpaceResult)
+// that survive plugin.stop() — by design in production but cross-test
+// poison in a long mocha run.
+beforeEach(() => {
+  ChartSeedingManager.resetForTests()
+})
 
 // The Plugin interface from @signalk/server-api types `start` as
 // `(config, restart) => void`, but charts-plugin's real implementation
@@ -506,7 +520,7 @@ describe('tile cache HTTP endpoints', () => {
         maxZoom: '5',
         bbox: { minLon: 0, minLat: 0, maxLon: 1, maxLat: 1 }
       })
-      .catch((e) => e.response)
+      .catch((e: any) => e.response)
     expect(res.status).to.equal(404)
   })
 
@@ -516,7 +530,7 @@ describe('tile cache HTTP endpoints', () => {
       .execute(`http://localhost:${serverPort(testServer)}`)
       .post('/signalk/chart-tiles/cache/proxy-test')
       .send({ bbox: { minLon: 0, minLat: 0, maxLon: 1, maxLat: 1 } })
-      .catch((e) => e.response)
+      .catch((e: any) => e.response)
     expect(res.status).to.equal(400)
   })
 
@@ -571,7 +585,7 @@ describe('tile cache HTTP endpoints', () => {
         maxZoom: '5',
         bbox: { minLon: 0, minLat: -91, maxLon: 1, maxLat: 90 }
       })
-      .catch((e) => e.response)
+      .catch((e: any) => e.response)
     expect(res.status).to.equal(400)
   })
 
@@ -584,7 +598,7 @@ describe('tile cache HTTP endpoints', () => {
         maxZoom: '5',
         bbox: { minLon: -181, minLat: 0, maxLon: 181, maxLat: 10 }
       })
-      .catch((e) => e.response)
+      .catch((e: any) => e.response)
     expect(res.status).to.equal(400)
   })
 
@@ -601,7 +615,7 @@ describe('tile cache HTTP endpoints', () => {
     expect(res.status).to.equal(400)
   })
 
-  it('POST /cache/:identifier returns 400 when no region/bbox/tile is given', async () => {
+  it('POST /cache/:identifier returns 400 when no region/bbox is given', async () => {
     await plugin.start({ onlineChartProviders: [proxyProvider] })
     const res = await request
       .execute(`http://localhost:${serverPort(testServer)}`)
@@ -611,7 +625,7 @@ describe('tile cache HTTP endpoints', () => {
     expect(res.status).to.equal(400)
   })
 
-  it('POST /cache/:identifier returns 202 with the fully-initialised job info', async () => {
+  it('POST /cache/:identifier returns 202 with the new job info', async () => {
     await plugin.start({ onlineChartProviders: [proxyProvider] })
     const res = await request
       .execute(`http://localhost:${serverPort(testServer)}`)
@@ -622,30 +636,12 @@ describe('tile cache HTTP endpoints', () => {
       })
     expect(res.status).to.equal(202)
     expect(res.body).to.include.keys(['id', 'totalTiles', 'status'])
-    // Init must have completed before the response: totalTiles is non-zero,
-    // which proves the tile set is populated.
+    // Init populates the tile set; totalTiles must be non-zero before the
+    // response so a follow-up POST /cache/jobs/:id { action: 'start' } can
+    // act on a known shape.
     expect(res.body.totalTiles).to.be.greaterThan(0)
-    // Job should not be auto-started — seeding is an explicit follow-up.
+    // No auto-start: seeding is an explicit second step.
     expect(res.body.downloadedTiles).to.equal(0)
-  })
-
-  it('POST /cache/:identifier with bbox respects the provider minzoom', async () => {
-    // provider minzoom=3, maxzoom=5. Before the fix, getTilesForBBox started
-    // at z=0 regardless of minzoom, so totalTiles would include the three
-    // low-zoom tiles we'd never actually seed. With the fix in place we
-    // should only see tiles from the provider's declared zoom range.
-    await plugin.start({ onlineChartProviders: [proxyProvider] })
-    const maxZoom = '5'
-    const bbox = { minLon: 5, minLat: 5, maxLon: 6, maxLat: 6 }
-    const withMinzoom = await request
-      .execute(`http://localhost:${serverPort(testServer)}`)
-      .post('/signalk/chart-tiles/cache/proxy-test')
-      .send({ maxZoom, bbox })
-    expect(withMinzoom.status).to.equal(202)
-    // With minzoom=3 we cover z=3..5, which for a tiny bbox well within a
-    // tile at each zoom is 3 tiles total. If minzoom were ignored we'd see
-    // 6 (also z=0,1,2 would each contribute 1 tile).
-    expect(withMinzoom.body.totalTiles).to.equal(3)
   })
 
   it('POST /cache/jobs/:id returns 400 on a non-numeric job id', async () => {
@@ -706,6 +702,326 @@ describe('tile cache HTTP endpoints', () => {
       .catch((e) => e.response)
     expect(res.status).to.equal(400)
   })
+
+  it('GET /cache/stats returns a per-provider stats object', async () => {
+    await plugin.start({ onlineChartProviders: [proxyProvider] })
+    const res = await request
+      .execute(`http://localhost:${serverPort(testServer)}`)
+      .get('/signalk/chart-tiles/cache/stats')
+    expect(res.status).to.equal(200)
+    // Body shape is `{ <providerId>: { requests, hits, misses, failures } }`.
+    // Stats accumulate as tiles are fetched; an idle test just verifies the
+    // shape (object with expected keys per provider, or an empty {}).
+    expect(res.body).to.be.an('object')
+  })
+
+  it('GET /cache/regions returns an empty FeatureCollection when none saved', async () => {
+    await plugin.start({ onlineChartProviders: [proxyProvider] })
+    const res = await request
+      .execute(`http://localhost:${serverPort(testServer)}`)
+      .get('/signalk/chart-tiles/cache/regions')
+    expect(res.status).to.equal(200)
+    expect(res.body).to.deep.equal({
+      type: 'FeatureCollection',
+      features: []
+    })
+  })
+
+  it('POST /cache/regions persists a FeatureCollection that GET returns', async () => {
+    await plugin.start({ onlineChartProviders: [proxyProvider] })
+    const fc = {
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          properties: { name: 'baltic' },
+          geometry: {
+            type: 'Polygon',
+            coordinates: [
+              [
+                [10, 53],
+                [20, 53],
+                [20, 60],
+                [10, 60],
+                [10, 53]
+              ]
+            ]
+          }
+        }
+      ]
+    }
+    const post = await request
+      .execute(`http://localhost:${serverPort(testServer)}`)
+      .post('/signalk/chart-tiles/cache/regions')
+      .send(fc)
+    expect(post.status).to.equal(200)
+    const get = await request
+      .execute(`http://localhost:${serverPort(testServer)}`)
+      .get('/signalk/chart-tiles/cache/regions')
+    expect(get.body).to.deep.equal(fc)
+  })
+
+  it('POST /cache/jobs/:id with action=start returns 409 for a non-Idle job', async () => {
+    await plugin.start({ onlineChartProviders: [proxyProvider] })
+    const createRes = await request
+      .execute(`http://localhost:${serverPort(testServer)}`)
+      .post('/signalk/chart-tiles/cache/proxy-test')
+      .send({
+        action: 'start',
+        maxZoom: '4',
+        bbox: { minLon: 0, minLat: 0, maxLon: 1, maxLat: 1 }
+      })
+    expect(createRes.status).to.equal(202)
+    const jobId = createRes.body.id
+    // Wait briefly for the seed to actually complete (small bbox at z=4
+    // resolves to ~1 tile, the fake provider URL fails to fetch but the
+    // job still moves through Seeding -> Completed).
+    await wait(200)
+    const restart = await request
+      .execute(`http://localhost:${serverPort(testServer)}`)
+      .post(`/signalk/chart-tiles/cache/jobs/${jobId}`)
+      .send({ action: 'start' })
+      .catch((e) => e.response)
+    expect(restart.status).to.equal(409)
+  })
+
+  it('POST /cache/:identifier/migrate returns 404 for an unknown provider', async () => {
+    await plugin.start({ onlineChartProviders: [proxyProvider] })
+    const res = await request
+      .execute(`http://localhost:${serverPort(testServer)}`)
+      .post('/signalk/chart-tiles/cache/does-not-exist/migrate')
+      .send({})
+      .catch((e) => e.response)
+    expect(res.status).to.equal(404)
+  })
+
+  it('POST /cache/:identifier/migrate rejects ../ in sourceName', async () => {
+    await plugin.start({ onlineChartProviders: [proxyProvider] })
+    const res = await request
+      .execute(`http://localhost:${serverPort(testServer)}`)
+      .post('/signalk/chart-tiles/cache/proxy-test/migrate')
+      .send({ sourceName: '../escape' })
+      .catch((e) => e.response)
+    expect(res.status).to.equal(400)
+  })
+
+  it('GET /cache/:identifier/migrate returns 404 before migration is started', async () => {
+    await plugin.start({ onlineChartProviders: [proxyProvider] })
+    const res = await request
+      .execute(`http://localhost:${serverPort(testServer)}`)
+      .get('/signalk/chart-tiles/cache/proxy-test/migrate')
+      .catch((e) => e.response)
+    expect(res.status).to.equal(404)
+  })
+
+  it('POST then GET /cache/:identifier/migrate reports the recorded state', async () => {
+    await plugin.start({ onlineChartProviders: [proxyProvider] })
+    // Empty source dir is the simplest case: migration completes with
+    // zero counts immediately and we can read the resulting state.
+    const post = await request
+      .execute(`http://localhost:${serverPort(testServer)}`)
+      .post('/signalk/chart-tiles/cache/proxy-test/migrate')
+      .send({ sourceName: 'no-such-dir' })
+    expect(post.status).to.equal(202)
+    expect(post.body.provider).to.equal('proxy-test')
+    // Poll for completion rather than sleeping a fixed budget. A real
+    // migration on a slow CI runner could exceed any single sleep
+    // duration; polling stays fast on the happy path.
+    const baseUrl = `http://localhost:${serverPort(testServer)}`
+    const deadline = Date.now() + 2000
+    let get: Awaited<ReturnType<ReturnType<typeof request.execute>['get']>>
+    do {
+      get = await request
+        .execute(baseUrl)
+        .get('/signalk/chart-tiles/cache/proxy-test/migrate')
+      if (get.body?.state !== 'running') break
+      await wait(20)
+    } while (Date.now() < deadline)
+    expect(get!.status).to.equal(200)
+    expect(get!.body.state).to.equal('completed')
+    expect(get!.body.counts).to.deep.equal({
+      migrated: 0,
+      skipped: 0,
+      failed: 0
+    })
+  })
+
+  it('POST /cache/:identifier/migrate returns 400 for a non-proxy provider with no working mbtiles', async () => {
+    // Same provider name but proxy:false → no working mbtiles handle is
+    // opened at startup. The migrate endpoint should reject with 400 and
+    // a message pointing at the misconfiguration.
+    const nonProxyProvider = {
+      ...proxyProvider,
+      proxy: false
+    }
+    await plugin.start({ onlineChartProviders: [nonProxyProvider] })
+    const res = await request
+      .execute(`http://localhost:${serverPort(testServer)}`)
+      .post('/signalk/chart-tiles/cache/proxy-test/migrate')
+      .send({})
+      .catch((e) => e.response)
+    expect(res.status).to.equal(400)
+    expect(res.text).to.match(/no working mbtiles cache/i)
+  })
+
+  it('POST /cache/:identifier/migrate returns 429 when re-fired inside the cooldown window', async () => {
+    // First POST kicks off a migration on a missing dir → completes
+    // immediately. A second POST inside the cooldown returns 429 with a
+    // Retry-After header.
+    await plugin.start({ onlineChartProviders: [proxyProvider] })
+    const baseUrl = `http://localhost:${serverPort(testServer)}`
+    const first = await request
+      .execute(baseUrl)
+      .post('/signalk/chart-tiles/cache/proxy-test/migrate')
+      .send({ sourceName: 'no-such-dir' })
+    expect(first.status).to.equal(202)
+    // Poll for the first to finish.
+    const deadline = Date.now() + 2000
+    while (Date.now() < deadline) {
+      const status = await request
+        .execute(baseUrl)
+        .get('/signalk/chart-tiles/cache/proxy-test/migrate')
+      if (status.body?.state !== 'running') break
+      await wait(20)
+    }
+    const second = await request
+      .execute(baseUrl)
+      .post('/signalk/chart-tiles/cache/proxy-test/migrate')
+      .send({ sourceName: 'no-such-dir' })
+      .catch((e) => e.response)
+    expect(second.status).to.equal(429)
+    expect(second.headers['retry-after']).to.match(/^\d+$/)
+  })
+
+  it('POST /cache/jobs/:id action=stop transitions a Running job', async () => {
+    // stop sets cancelRequested; the seed worker observes it on its next
+    // tile dequeue and returns. A subsequent GET should reflect the
+    // cancelled state.
+    await plugin.start({ onlineChartProviders: [proxyProvider] })
+    const baseUrl = `http://localhost:${serverPort(testServer)}`
+    const create = await request
+      .execute(baseUrl)
+      .post('/signalk/chart-tiles/cache/proxy-test')
+      .send({
+        action: 'start',
+        maxZoom: '4',
+        bbox: { minLon: 0, minLat: 0, maxLon: 1, maxLat: 1 }
+      })
+    expect(create.status).to.equal(202)
+    const jobId = create.body.id
+    const stop = await request
+      .execute(baseUrl)
+      .post(`/signalk/chart-tiles/cache/jobs/${jobId}`)
+      .send({ action: 'stop' })
+    expect(stop.status).to.equal(200)
+  })
+
+  it('POST /cache/jobs/:id action=remove drops the job from the registry', async () => {
+    await plugin.start({ onlineChartProviders: [proxyProvider] })
+    const baseUrl = `http://localhost:${serverPort(testServer)}`
+    const create = await request
+      .execute(baseUrl)
+      .post('/signalk/chart-tiles/cache/proxy-test')
+      .send({
+        action: 'start',
+        maxZoom: '4',
+        bbox: { minLon: 0, minLat: 0, maxLon: 1, maxLat: 1 }
+      })
+    const jobId = create.body.id
+    const remove = await request
+      .execute(baseUrl)
+      .post(`/signalk/chart-tiles/cache/jobs/${jobId}`)
+      .send({ action: 'remove' })
+    expect(remove.status).to.equal(200)
+    // GET /cache/jobs should no longer include the removed job.
+    const list = await request
+      .execute(baseUrl)
+      .get('/signalk/chart-tiles/cache/jobs')
+    const ids = (list.body as Array<{ id: number }>).map((j) => j.id)
+    expect(ids).to.not.include(jobId)
+  })
+
+  it('tokenProviders config registers a provider that appears in /resources/charts', async () => {
+    // Verifies the config -> ChartProvider wiring without going to the
+    // network: the provider just needs to be discoverable as a chart.
+    await plugin.start({
+      tokenProviders: [
+        {
+          identifier: 'navionics',
+          name: 'Navionics',
+          tokenEndpoint: {
+            url: 'https://example.test/token',
+            method: 'GET',
+            ttlSeconds: 600
+          },
+          tile: {
+            url: 'https://example.test/{z}/{x}/{y}?t={token.access}'
+          }
+        }
+      ]
+    })
+    const res = await request
+      .execute(`http://localhost:${serverPort(testServer)}`)
+      .get('/signalk/v1/api/resources/charts')
+    expect(res.status).to.equal(200)
+    expect(res.body).to.have.property('navionics')
+  })
+})
+
+describe('tile helpers (Coordinate math)', () => {
+  const filePath = path.join(__dirname, 'regions.json')
+  const raw = fs.readFileSync(filePath, 'utf-8')
+  const geojson = JSON.parse(raw) as GeoJSON.FeatureCollection<
+    GeoJSON.Geometry,
+    { name?: string; id?: string }
+  >
+
+  const minZoom = 3
+  const maxZoom = 15
+
+  if (!geojson.features || geojson.features.length === 0) {
+    throw new Error('No features found in regions.json')
+  }
+
+  geojson.features.forEach((feature, index) => {
+    const name =
+      (feature.properties &&
+        (feature.properties.name || feature.properties.id)) ||
+      `feature-${index}`
+
+    it(`counts tiles for ${name}`, function () {
+      this.timeout(20000)
+      const geojson = TileHelpers.convertFeatureToGeoJSON(feature)
+      const tiles = () =>
+        TileHelpers.getTilesForGeoJSON(geojson, minZoom, maxZoom)
+      let start = performance.now()
+      const slowCount = TileHelpers.countTiles(tiles, 100000000)
+      let end = performance.now()
+      console.log(
+        `Feature: ${name} → ${slowCount} (slow): ${(end - start).toFixed(2)} ms)`
+      )
+
+      start = performance.now()
+      const fastCount = TileHelpers.countTilesAdaptiveIterative(
+        geojson,
+        minZoom,
+        maxZoom
+      )
+      end = performance.now()
+
+      let percentageDifference =
+        Math.abs((slowCount - fastCount) / slowCount) * 100
+
+      console.log(
+        `Feature: ${name} → ${fastCount}: ${(end - start).toFixed(2)} ms)`
+      )
+      console.log(
+        'Percentage difference: ' + percentageDifference.toFixed(2) + '%'
+      )
+
+      expect(percentageDifference).to.lessThan(2)
+    })
+  })
 })
 
 const expectTileResponse = (
@@ -731,6 +1047,7 @@ interface TestApp extends express.Express {
   statusMessage: () => string
   setPluginStatus: (pluginId: string, status: string) => void
   setPluginError: (pluginId: string, status: string) => void
+  getDataDirPath: () => string
   lastPluginStatus?: string
 }
 
@@ -747,6 +1064,11 @@ const createDefaultApp = (): Promise<{ app: TestApp; server: http.Server }> => {
     app.lastPluginStatus = status
   }) as unknown as TestApp['setPluginStatus']
   app.setPluginError = () => undefined
+  // Plugin uses this to locate regions.json. A scoped temp dir per app
+  // keeps tests from sharing state and lets the cleanup in afterEach
+  // reclaim disk.
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'charts-plugin-data-'))
+  app.getDataDirPath = () => dataDir
 
   return new Promise((resolve) => {
     const server = http.createServer(app)

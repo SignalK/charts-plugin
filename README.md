@@ -99,6 +99,78 @@ Example: NOAA Chart Display Service (S-57 ENC) as a cacheable tile source — se
 https://gis.charttools.noaa.gov/arcgis/rest/services/MCS/NOAAChartDisplay/MapServer/exts/MaritimeChartService/WMSServer?service=WMS&version=1.3.0&request=GetMap&layers=0,1,2,3,4,5,6,7,8,9,10,11,12&styles=&crs=EPSG:3857&bbox={bbox_3857}&width=256&height=256&format=image/png&transparent=true
 ```
 
+### Token providers (declarative dynamic providers)
+
+Some commercial chart sources require a short-lived bearer token fetched from a separate endpoint and rotated periodically (Navionics-via-Garmin, ArcGIS-style key rotation, OAuth client_credentials, etc). Configure these via `tokenProviders` in the plugin config. The plugin fetches the token, caches it for `ttlSeconds`, and templates it into the tile URL and headers per request. No code execution — declarative JSON only.
+
+```json
+{
+  "tokenProviders": [
+    {
+      "identifier": "navionics",
+      "name": "Navionics",
+      "type": "tilelayer",
+      "format": "png",
+      "scale": 50000,
+      "minzoom": 2,
+      "maxzoom": 19,
+      "bounds": [-180, -90, 180, 90],
+      "tokenEndpoint": {
+        "url": "https://example.com/api/token",
+        "method": "GET",
+        "headers": { "User-Agent": "..." },
+        "ttlSeconds": 600
+      },
+      "tile": {
+        "url": "https://tile{1-5}.example.com/v1/tile/{z}/{x}/{y}?config={token.configuration_token}",
+        "headers": { "Authorization": "Bearer {token.access_token}" }
+      }
+    }
+  ]
+}
+```
+
+Template placeholders inside `tile.url` and `tile.headers`:
+
+| Placeholder       | Replaced with                                                      |
+| ----------------- | ------------------------------------------------------------------ |
+| `{token.<field>}` | A string-valued field from the latest token-endpoint JSON response |
+| `{a-b}`           | A random integer in `[a, b]` inclusive (sharded tile hostnames)    |
+| `{z}` `{x}` `{y}` | Tile coords (substituted by the standard tile fetch path)          |
+
+Token fetches are coalesced — concurrent tile requests share one in-flight token fetch — and an upstream 401/403 invalidates the cached token so the next request refetches it. A token-endpoint failure is logged but doesn't take down tile requests; subsequent fetches retry.
+
+> [!WARNING]
+> The plugin executes only the configured HTTP requests. The configs themselves describe how to talk to a third-party service: confirm the provider's terms of use allow it before deploying. SignalK itself ships no provider configs that may break a third party's TOS.
+
+### Cache directory layout
+
+When `cachePath` is set (or defaulted to `~/.signalk/charts/`) the plugin organises its files into three subdirectories that the chart scanner treats differently:
+
+| Subdir      | Scanned? | Purpose                                                                                                                                           |
+| ----------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.working/` | No       | Per-provider working mbtiles caches (`<id>/cache.mbtiles`); written to by the proxy.                                                              |
+| `exports/`  | No       | Region snapshot mbtiles produced by seeding jobs with the "separate file" option. Intended for offline transfer (USB stick to another SK server). |
+| (any other) | Yes      | Charts the user installed; opened read-only by the scanner.                                                                                       |
+
+The scanner also skips any top-level entry whose name starts with `.`. On startup the plugin migrates pre-3.7 layouts (`<id>.mbtiles_` and `mbtiles/` subdir) into this shape automatically; the migration is idempotent so a repeat startup is a no-op.
+
+### Migrating a pre-3.7 PNG cache
+
+Versions before 3.7 stored proxy-cached tiles as one PNG per tile under `<cachePath>/<provider.name>/<z>/<x>/<y>.<format>`. The 3.7 release moves all caching into mbtiles. To reuse an existing PNG cache instead of re-downloading:
+
+```bash
+# Kick off the migration (returns 202 immediately)
+curl -X POST http://localhost:3000/signalk/chart-tiles/cache/<provider-id>/migrate \
+  -H 'Content-Type: application/json' \
+  -d '{"sourceName": "<legacy-dir-name>", "deleteSource": false}'
+
+# Poll progress / final counts
+curl http://localhost:3000/signalk/chart-tiles/cache/<provider-id>/migrate
+```
+
+`sourceName` defaults to `provider.name` (the human-readable name the old cache was keyed under). `deleteSource: true` removes each PNG after a successful insert; the default keeps the source files in place so a botched migration is recoverable. The migration is idempotent — re-running after a failure picks up where the last attempt left off.
+
 ### Supported chart formats
 
 - [MBTiles](https://github.com/mapbox/mbtiles-spec) files

@@ -13,3 +13,9 @@ reports
 
 # Temp dirs used by watcher tests
 test/.tmp
+
+# Plugin-managed cache subdirs that the migration / proxy code may create
+# under the test cachePath (which doubles as test/charts). Treat the
+# committed test fixture as the source of truth and ignore runtime output.
+test/charts/.working
+test/charts/exports
