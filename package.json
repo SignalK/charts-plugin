@@ -34,7 +34,10 @@
   },
   "signalk": {
     "displayName": "SK Charts",
-    "appIcon": "./logo.svg"
+    "appIcon": "./logo.svg",
+    "screenshots": [
+      "./docs/screenshots/1_placeholder.png"
+    ]
   },
   "dependencies": {
     "@signalk/mbtiles": "0.1.1",
