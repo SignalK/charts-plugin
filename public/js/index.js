@@ -7,7 +7,7 @@ var isDeleting = false
 let jobsPollInterval = null
 let jobsControl = null
 
-const JobType = Object.freeze({ 
+const JobType = Object.freeze({
   None: 0,
   Seed: 1,
   Delete: 2
@@ -44,9 +44,9 @@ function saveSettings() {
 async function setupCharts() {
   settings = JSON.parse(localStorage.getItem('settings') || '{}')
 
-  settings.map = settings.map || { center: [0, 0], zoomLevel: 3 };
-  settings.selections = settings.selections || { charts: [] };
-  settings.selections.charts = settings.selections.charts || [];
+  settings.map = settings.map || { center: [0, 0], zoomLevel: 3 }
+  settings.selections = settings.selections || { charts: [] }
+  settings.selections.charts = settings.selections.charts || []
 
   map = L.map('map').setView(
     settings ? settings.map.center : [0, 0],
@@ -595,8 +595,7 @@ function updateRegionButtons() {
   if (isValidRegionName(regionInput.value.trim())) {
     regionInput.style.borderColor = ''
     saveRegionBtn.disabled = false
-  }
-  else {
+  } else {
     regionInput.style.borderColor = 'red'
     saveRegionBtn.disabled = true
   }
@@ -613,5 +612,3 @@ function updateRegionButtons() {
     deleteBtn.disabled = true
   }
 }
-
-
