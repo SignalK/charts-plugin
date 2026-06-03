@@ -235,9 +235,7 @@ describe('GET /resources/charts', () => {
 
   it('config schema chartPaths description omits scan info before first start (issue #8)', () => {
     const schema = getChartPathsSchema(plugin)
-    expect(schema.description).to.match(
-      /^Add one or more paths to find charts\. Defaults to/
-    )
+    expect(schema.description).to.match(/^Path to find charts, relative to/)
     expect(schema.description).to.not.include('Last scan')
   })
 
@@ -1170,15 +1168,18 @@ const get = (server: http.Server, location: string) => {
 }
 
 const getChartPathsSchema = (plugin: PluginInstance) => {
+  // The per-path scan-count text lives on the array's items, not the array
+  // itself: the admin UI renders an array field's own description twice, so the
+  // dynamic description is attached to the item to avoid the duplicate.
   const schema = plugin.schema?.() as {
     properties: {
-      chartPaths: { description: string }
+      chartPaths: { items: { description: string } }
     }
   }
-  if (!schema?.properties?.chartPaths) {
-    throw new Error('schema() did not return chartPaths')
+  if (!schema?.properties?.chartPaths?.items) {
+    throw new Error('schema() did not return chartPaths.items')
   }
-  return schema.properties.chartPaths
+  return schema.properties.chartPaths.items
 }
 
 const serverPort = (server: http.Server): number => {

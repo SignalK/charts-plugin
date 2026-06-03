@@ -149,11 +149,13 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
   const nodeVersion = process.versions.node
   const nodeMajorVersion = parseInt(nodeVersion.split('.')[0] ?? '0')
 
-  // Builds the `chartPaths` description, appending the latest per-path chart
-  // counts when available. The admin UI re-fetches the schema every time the
-  // plugin config page opens, so this text refreshes on reload.
-  const chartPathsDescription = () => {
-    const base = `Add one or more paths to find charts. Defaults to "${defaultChartsPath}"`
+  // Builds the chart-path field description, appending the latest per-path
+  // chart counts when available. The admin UI re-fetches the schema every time
+  // the plugin config page opens, so this text refreshes on reload. Applied to
+  // the array's items (not the array) because the admin UI renders an array
+  // field's own description twice.
+  const chartPathItemDescription = () => {
+    const base = `Path to find charts, relative to "${configBasePath}". Defaults to "${defaultChartsPath}"`
     if (lastChartPathCounts.length === 0) return base
     const parts = lastChartPathCounts.map(
       (p) => `${p.chartPath} (${p.count} ${p.count === 1 ? 'chart' : 'charts'})`
@@ -181,11 +183,14 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
       chartPaths: {
         type: 'array',
         title: 'Chart paths',
-        description: chartPathsDescription(),
+        // Description on the items, not the array: the admin UI renders an
+        // array field's own description twice. The per-path scan counts that
+        // used to live here are already surfaced in the plugin status banner
+        // (see composeStatus), so nothing is lost.
         items: {
           type: 'string',
           title: 'Path',
-          description: `Path for chart files, relative to "${configBasePath}"`
+          description: chartPathItemDescription()
         }
       },
       cachePath: {
@@ -262,12 +267,13 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
             headers: {
               type: 'array',
               title: 'Headers',
-              description:
-                'List of http headers to be sent to the remote server when requesting map tiles through proxy.',
               items: {
                 title: 'Header Name: Value',
+                // Help text on the items, not the array: the admin UI renders
+                // an array field's own description twice.
                 description:
-                  'Name and Value of the HTTP header separated by colon',
+                  'HTTP header sent to the remote server when proxying tiles, ' +
+                  'as Name: Value (e.g. "User-Agent: MyApp/1.0").',
                 type: 'string'
               }
             },
@@ -280,11 +286,12 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
             layers: {
               type: 'array',
               title: 'Layers',
-              description:
-                'List of map layer ids to display. (Use with WMS / WMTS types.)',
               items: {
                 title: 'Layer Name',
-                description: 'Name of layer to display',
+                // Help text on the items, not the array: the admin UI renders
+                // an array field's own description twice.
+                description:
+                  'Map layer id to display (use with WMS / WMTS types).',
                 type: 'string'
               }
             }
@@ -294,14 +301,18 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
       tokenProviders: {
         type: 'array',
         title: 'Token providers',
-        description:
-          'Declarative configs for chart providers that need a token ' +
-          'fetched from a separate URL. The token is cached for ttlSeconds ' +
-          'and templated into the tile URL/headers as {token.<field>}. ' +
-          'Use {a-b} in URLs for sharded hostnames (random integer in [a,b]).',
         items: {
           type: 'object',
           title: 'Token provider',
+          // The array's items carry the help text rather than the array field
+          // itself: the admin UI's form renderer prints an array-of-objects
+          // `description` twice (once for the array, once for the object
+          // items), so keeping it only here renders it once.
+          description:
+            'Declarative configs for chart providers that need a token ' +
+            'fetched from a separate URL. The token is cached for ttlSeconds ' +
+            'and templated into the tile URL/headers as {token.<field>}. ' +
+            'Use {a-b} in URLs for sharded hostnames (random integer in [a,b]).',
           required: ['identifier', 'name', 'tokenEndpoint', 'tile'],
           properties: {
             identifier: {
