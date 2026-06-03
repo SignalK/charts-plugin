@@ -39,7 +39,9 @@
     "displayName": "SK Charts",
     "appIcon": "./logo.svg",
     "screenshots": [
-      "./docs/screenshots/1_placeholder.png"
+      "./docs/screenshots/1_overview.png",
+      "./docs/screenshots/2_region.png",
+      "./docs/screenshots/3_jobs.png"
     ]
   },
   "dependencies": {
