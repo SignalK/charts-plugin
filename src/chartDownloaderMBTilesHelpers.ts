@@ -1,6 +1,5 @@
 import { mkdirSync } from 'fs'
 import path from 'path'
-import MBTiles from '@signalk/mbtiles'
 import {
   ChartProvider,
   OnlineChartProvider,
@@ -16,27 +15,59 @@ import {
   tileToBBox,
   bboxPolygon
 } from './chartDownloaderTileHelpers'
-import { DatabaseSync } from 'node:sqlite'
+import type { DatabaseSync } from 'node:sqlite'
+
+// @signalk/mbtiles is loaded lazily because it `require('node:sqlite')` at its
+// own module top level, which throws ERR_UNKNOWN_BUILTIN_MODULE on Node < 22.
+// A static import here would run that require the moment index.ts is loaded —
+// before the plugin's Node-version guard can show the user a helpful message.
+// Deferring it to first use lets the guard run first. charts.ts loads the same
+// library the same way for the same reason.
+type MBTilesConstructor = new (
+  file: string,
+  callback: (err: Error | null, mbtiles: MBTilesHandle) => void
+) => MBTilesHandle
+
+let MBTiles: MBTilesConstructor | null = null
+
+async function loadMBTiles(): Promise<MBTilesConstructor> {
+  if (MBTiles === null) {
+    const module = await import('@signalk/mbtiles')
+    MBTiles = (module.default || module) as unknown as MBTilesConstructor
+  }
+  return MBTiles
+}
 
 type TileRow = {
   tile_column: number
   tile_row: number
 }
 
-export function openOrCreateMbtiles(
+export async function openOrCreateMbtiles(
   mbtilesPath: string,
   provider: OnlineChartProvider | ChartProvider
 ): Promise<MBTilesHandle> {
-  console.log(`Opening/creating MBTiles at ${mbtilesPath}`)
   mkdirSync(path.dirname(mbtilesPath), { recursive: true })
+  const MBTilesCtor = await loadMBTiles()
 
   return new Promise((resolve, reject) => {
-    new MBTiles(
+    new MBTilesCtor(
       `${mbtilesPath}?mode=rwc`,
-      (err: Error | null, mbtiles: any) => {
+      (err: Error | null, mbtiles: MBTilesHandle) => {
         if (err) {
           return reject(err)
         }
+        // MBTiles is an EventEmitter over a raw sqlite handle. Without an
+        // 'error' listener a runtime DB error (ENOSPC/EIO on an SD card mid
+        // write) is an unhandled 'error' event, which crashes the process.
+        // Demote it to a log so a flaky write surface can't take the server
+        // down. Attached before startWriting so an error during open is caught.
+        mbtiles.on('error', (e: Error) => {
+          console.error(
+            `MBTiles write handle error (${mbtilesPath}):`,
+            e.message
+          )
+        })
         mbtiles.startWriting((err: Error | null) => {
           if (err) {
             return reject(err)

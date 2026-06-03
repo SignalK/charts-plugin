@@ -255,15 +255,14 @@ async function setupCharts() {
     saveSettings()
   })
 
-  jobsPollInterval = setInterval(fetchActiveJobs, 2000)
   setupDragAndDrop()
 }
 
 // Help
 
 function toggleHelpModal() {
-  let modal = document.getElementById('help')
-  const isHidden = modal.classList.toggle('hidden')
+  const modal = document.getElementById('help')
+  modal.classList.toggle('hidden')
 }
 
 // Jobs
@@ -273,30 +272,17 @@ function toggleJobsModal() {
   const isHidden = modal.classList.toggle('hidden')
 
   if (isHidden) {
-    if (!jobsPollInterval) return
-
-    // clearInterval(jobsPollInterval)
-    // jobsPollInterval = null
+    // Stop polling while the panel is closed; nothing is watching it and the
+    // 2s fetch otherwise runs for the life of the page.
+    if (jobsPollInterval) {
+      clearInterval(jobsPollInterval)
+      jobsPollInterval = null
+    }
   } else {
     if (jobsPollInterval) return // already running
-
-    fetchActiveJobs() // fetch immediately
+    fetchActiveJobs() // fetch immediately, then poll while open
+    jobsPollInterval = setInterval(fetchActiveJobs, 2000)
   }
-}
-
-function renderProgress(job) {
-  const pct =
-    typeof job.progress === 'number' && isFinite(job.progress)
-      ? Math.max(0, Math.min(100, job.progress * 100))
-      : 0
-  const pctText = `${pct.toFixed(1)}%`
-
-  return `
-    <span class="progress-bar">
-      <span class="progress-fill" style="width:${pct}%"></span>
-    </span>
-    <span class="percent">${pctText}</span>
-  `
 }
 
 function cloneTemplate(id) {
@@ -411,7 +397,6 @@ async function createJob(action) {
       body: JSON.stringify(body)
     })
     if (!resp.ok) {
-      //TODO: No reason to throw here
       throw new Error(`Failed to seed charts: ${resp.status}`)
     }
     const data = await resp.json()
@@ -424,6 +409,11 @@ async function createJob(action) {
     }, 2000)
   } catch (err) {
     console.error('Error seeding charts:', err)
+    const responseSpan = document.getElementById('response')
+    if (responseSpan) {
+      responseSpan.classList.remove('hidden')
+      responseSpan.textContent = err.message || 'Error seeding charts'
+    }
   }
   closeRegionModal()
 }

@@ -143,22 +143,26 @@ describe('GET /resources/charts', () => {
       })
       .then(() => get(testServer, '/signalk/v1/api/resources/charts'))
       .then((result) => {
+        // remoteUrl / headers are deliberately NOT exposed in the resources
+        // view: for token providers they resolve a live bearer token, and
+        // clients always fetch via the proxy tile path, never the upstream
+        // directly. Their absence here is the regression guard for that.
         expect(result.body['test-name']).to.deep.equal({
           bounds: [-180, -90, 180, 90],
           format: 'jpg',
-          headers: {},
           identifier: 'test-name',
           maxzoom: 15,
           minzoom: 2,
           name: 'Test Name',
           proxy: false,
-          remoteUrl: null,
           scale: 250000,
           style: null,
           tilemapUrl: 'https://example.com',
           type: 'tilelayer',
           chartLayers: null
         })
+        expect(result.body['test-name']).to.not.have.property('remoteUrl')
+        expect(result.body['test-name']).to.not.have.property('headers')
       })
   })
 
@@ -805,6 +809,33 @@ describe('tile cache HTTP endpoints', () => {
     expect(res.status).to.equal(400)
   })
 
+  // cachePath defaults to <configPath>/charts (here: test/charts), the same
+  // root the chart scanner reads. A migrate sourceName that resolves onto an
+  // installed directory chart (one carrying tilemapresource.xml / metadata.json)
+  // stays inside cachePath — so it passes the escape check — but must still be
+  // refused, otherwise deleteSource:true would walk and unlink the user's
+  // installed chart tiles, which share the <z>/<x>/<y> layout the migrator
+  // expects. Both fixture chart dirs are exercised.
+  it('POST /cache/:identifier/migrate refuses an installed TMS chart (tilemapresource.xml)', async () => {
+    await plugin.start({ onlineChartProviders: [proxyProvider] })
+    const res = await request
+      .execute(`http://localhost:${serverPort(testServer)}`)
+      .post('/signalk/chart-tiles/cache/proxy-test/migrate')
+      .send({ sourceName: 'tms-tiles', deleteSource: true })
+      .catch((e) => e.response)
+    expect(res.status).to.equal(409)
+  })
+
+  it('POST /cache/:identifier/migrate refuses an installed XYZ chart (metadata.json)', async () => {
+    await plugin.start({ onlineChartProviders: [proxyProvider] })
+    const res = await request
+      .execute(`http://localhost:${serverPort(testServer)}`)
+      .post('/signalk/chart-tiles/cache/proxy-test/migrate')
+      .send({ sourceName: 'unpacked-tiles', deleteSource: true })
+      .catch((e) => e.response)
+    expect(res.status).to.equal(409)
+  })
+
   it('GET /cache/:identifier/migrate returns 404 before migration is started', async () => {
     await plugin.start({ onlineChartProviders: [proxyProvider] })
     const res = await request
@@ -939,6 +970,52 @@ describe('tile cache HTTP endpoints', () => {
       .get('/signalk/chart-tiles/cache/jobs')
     const ids = (list.body as Array<{ id: number }>).map((j) => j.id)
     expect(ids).to.not.include(jobId)
+  })
+
+  it('POST /cache/jobs/:id action=delete settles without an unhandled rejection', async () => {
+    // deleteCache() is fire-and-forget: the handler returns 202 and the work
+    // runs detached. If it rejects (locked DB, disk error) without a terminal
+    // .catch(), Node turns it into an unhandledRejection that kills the whole
+    // server. Assert no unhandledRejection escapes for the lifetime of the
+    // call, and that the delete job reaches a terminal state.
+    await plugin.start({ onlineChartProviders: [proxyProvider] })
+    const baseUrl = `http://localhost:${serverPort(testServer)}`
+    const rejections: unknown[] = []
+    const onUnhandled = (reason: unknown) => rejections.push(reason)
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      const create = await request
+        .execute(baseUrl)
+        .post('/signalk/chart-tiles/cache/proxy-test')
+        .send({
+          action: 'delete',
+          maxZoom: '4',
+          bbox: { minLon: 0, minLat: 0, maxLon: 1, maxLat: 1 }
+        })
+      expect(create.status).to.equal(202)
+      const jobId = create.body.id
+      // Let the detached delete run to completion / failure, then give the
+      // microtask queue a tick so any missing .catch() would have surfaced.
+      const deadline = Date.now() + 2000
+      let status = ''
+      do {
+        const list = await request
+          .execute(baseUrl)
+          .get('/signalk/chart-tiles/cache/jobs')
+        const job = (list.body as Array<{ id: number; status: string }>).find(
+          (j) => j.id === jobId
+        )
+        status = job?.status ?? ''
+        if (status === '' || /Completed|Failed/.test(status)) break
+        await wait(20)
+      } while (Date.now() < deadline)
+      await wait(50)
+      expect(rejections, `unhandledRejection(s): ${rejections}`).to.have.length(
+        0
+      )
+    } finally {
+      process.removeListener('unhandledRejection', onUnhandled)
+    }
   })
 
   it('tokenProviders config registers a provider that appears in /resources/charts', async () => {

@@ -365,47 +365,66 @@ export class ChartDownloader {
     this.state = State.Stopped
 
     if (this.options.mbtiles) {
-      this.status = 'Creating MBTiles'
-      const safeRegionName = this.regionName
-        .normalize('NFKC') // normalize unicode
-        .replace(/[^a-zA-Z0-9_-]/g, '_') // allow only safe chars
-        .replace(/_+/g, '_') // collapse repeats
-        .replace(/^_+|_+$/g, '') // trim underscores
-        .slice(0, 100) // limit length
-      // Snapshot exports go to ${cachePath}/exports/, which is excluded from
-      // the chart scanner — the file is a build artifact for offline transfer
-      // (USB stick to another SK server), not a chart the running plugin
-      // serves. Re-running the job overwrites the file freely; no scanner
-      // handle holds it open.
-      const baseDir = path.resolve(this.cachePath, EXPORTS_DIR)
-      const filePath = path.resolve(
-        exportMbtilesPath(
-          this.cachePath,
-          safeRegionName,
-          this.provider.identifier
+      try {
+        this.status = 'Creating MBTiles'
+        const safeRegionName = this.regionName
+          .normalize('NFKC') // normalize unicode
+          .replace(/[^a-zA-Z0-9_-]/g, '_') // allow only safe chars
+          .replace(/_+/g, '_') // collapse repeats
+          .replace(/^_+|_+$/g, '') // trim underscores
+          .slice(0, 100) // limit length
+        // Snapshot exports go to ${cachePath}/exports/, which is excluded from
+        // the chart scanner — the file is a build artifact for offline transfer
+        // (USB stick to another SK server), not a chart the running plugin
+        // serves. Re-running the job overwrites the file freely; no scanner
+        // handle holds it open.
+        const baseDir = path.resolve(this.cachePath, EXPORTS_DIR)
+        const filePath = path.resolve(
+          exportMbtilesPath(
+            this.cachePath,
+            safeRegionName,
+            this.provider.identifier
+          )
         )
-      )
 
-      // Same separator-aware check as the migrate endpoint: a naive
-      // startsWith would miss sibling-directory prefix collisions.
-      if (filePath !== baseDir && !filePath.startsWith(baseDir + path.sep)) {
-        throw new Error('Invalid path detected')
-      }
-
-      // TODO: Check for diskspace
-
-      const mbtiles = await openOrCreateMbtiles(filePath, this.provider)
-      const iterator = this.tiles()
-      for (const tile of iterator) {
-        const buffer = await ChartDownloader.getTileFromMbTiles(
-          this.provider._mbtilesHandle!,
-          tile
-        )
-        if (buffer) {
-          await ChartDownloader.cacheTileToMbTiles(mbtiles, tile, buffer)
+        // Same separator-aware check as the migrate endpoint: a naive
+        // startsWith would miss sibling-directory prefix collisions.
+        if (filePath !== baseDir && !filePath.startsWith(baseDir + path.sep)) {
+          throw new Error('Invalid path detected')
         }
+
+        // The export copies the whole seeded set into a second mbtiles, so it
+        // needs roughly as much free space again. Bail before opening the file
+        // rather than filling the disk and corrupting the working cache.
+        if (!(await ChartDownloader.hasDiskSpace(baseDir))) {
+          throw new Error('Insufficient disk space for mbtiles export')
+        }
+
+        const mbtiles = await openOrCreateMbtiles(filePath, this.provider)
+        const iterator = this.tiles()
+        for (const tile of iterator) {
+          const buffer = await ChartDownloader.getTileFromMbTiles(
+            this.provider._mbtilesHandle!,
+            tile
+          )
+          if (buffer) {
+            await ChartDownloader.cacheTileToMbTiles(mbtiles, tile, buffer)
+          }
+        }
+        mbtiles._db?.exec('PRAGMA wal_checkpoint(TRUNCATE);')
+      } catch (err) {
+        // The tile seed itself already succeeded (state is Stopped); only the
+        // optional export failed. Record it and rethrow so the HTTP handler's
+        // .catch() can log it without an unhandled rejection crashing the
+        // server.
+        this.status = `Failed: ${(err as Error).message}`
+        console.error(
+          `[charts-plugin] job ${this.id} mbtiles export failed: ${
+            (err as Error).message
+          }`
+        )
+        throw err
       }
-      mbtiles._db?.exec('PRAGMA wal_checkpoint(TRUNCATE);')
     }
     this.status = 'Completed'
     console.log(
@@ -426,31 +445,44 @@ export class ChartDownloader {
       `[charts-plugin] job ${this.id} delete started ` +
         `provider=${this.provider.identifier} totalTiles=${this.totalTiles}`
     )
-    const db = requireMbtilesDb(this.provider)
-    await deleteTilesInChunks(db, this.tilesInDB(), 1000, (deleted) => {
+    try {
+      const db = requireMbtilesDb(this.provider)
+      await deleteTilesInChunks(db, this.tilesInDB(), 1000, (deleted) => {
+        console.log(
+          `[charts-plugin] job ${this.id} deleted ${deleted} / ${this.totalTiles}`
+        )
+      })
+      this.status = 'Purging orphaned images'
+      await purgeAllOrphanImages(db, 1000, (deleted, totalDeleted) => {
+        this.deletedTiles += deleted
+        console.log(
+          `[charts-plugin] job ${this.id} purged ${totalDeleted} orphans ` +
+            `(last chunk ${deleted})`
+        )
+      })
+      if (this.options.vacuum) {
+        this.status = 'Vacuuming MBTiles database'
+        vacuumMbtiles(db)
+      }
+      this.status = 'Completed'
+      this.state = State.Stopped
       console.log(
-        `[charts-plugin] job ${this.id} deleted ${deleted} / ${this.totalTiles}`
+        `[charts-plugin] job ${this.id} delete completed ` +
+          `provider=${this.provider.identifier} ` +
+          `deletedTiles=${this.deletedTiles}`
       )
-    })
-    this.status = 'Purging orphaned images'
-    await purgeAllOrphanImages(db, 1000, (deleted, totalDeleted) => {
-      this.deletedTiles += deleted
-      console.log(
-        `[charts-plugin] job ${this.id} purged ${totalDeleted} orphans ` +
-          `(last chunk ${deleted})`
+    } catch (err) {
+      // Record the failure on the job and reset state so the job doesn't sit
+      // wedged in 'Running' forever. Rethrow so callers / tests still observe
+      // it — the HTTP handler attaches a .catch() to keep the rejection from
+      // becoming an unhandled rejection that crashes the server.
+      this.state = State.Stopped
+      this.status = `Failed: ${(err as Error).message}`
+      console.error(
+        `[charts-plugin] job ${this.id} delete failed: ${(err as Error).message}`
       )
-    })
-    if (this.options.vacuum) {
-      this.status = 'Vacuuming MBTiles database'
-      vacuumMbtiles(db)
+      throw err
     }
-    this.status = 'Completed'
-    this.state = State.Stopped
-    console.log(
-      `[charts-plugin] job ${this.id} delete completed ` +
-        `provider=${this.provider.identifier} ` +
-        `deletedTiles=${this.deletedTiles}`
-    )
   }
 
   public cancelJob() {

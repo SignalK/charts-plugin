@@ -19,6 +19,9 @@
     "prepublishOnly": "npm run build"
   },
   "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.5.0"
+  },
   "keywords": [
     "signalk",
     "signalk-node-server-plugin",

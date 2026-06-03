@@ -1017,6 +1017,21 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
         }
         const handle = provider._mbtilesHandle
         const deleteSource = body.deleteSource === true
+        // The default cachePath IS the chart-scan path, and a directory-format
+        // chart is stored as the same <z>/<x>/<y>.<fmt> tree this migration
+        // walks (and, with deleteSource, unlinks). Without this guard a request
+        // like { sourceName: "<installed-chart-dir>", deleteSource: true }
+        // would drain and delete a user's installed chart. Refuse when the
+        // source resolves onto an installed chart.
+        const installedChart = resolveInstalledChartCollision(legacyDir)
+        if (installedChart) {
+          return res
+            .status(409)
+            .send(
+              `sourceName "${sourceName}" resolves onto installed chart data ` +
+                `(${installedChart}). Refusing to migrate it as a legacy cache.`
+            )
+        }
         const controller = new AbortController()
         const status: MigrationStatus = {
           state: 'running',
@@ -1164,9 +1179,9 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
               : undefined
           )
           if (action === 'start') {
-            job.seedCache()
+            runJobInBackground(job, job.seedCache())
           } else if (action === 'delete') {
-            job.deleteCache()
+            runJobInBackground(job, job.deleteCache())
           }
           // Job is registered and its tile set is known, but nothing has been
           // downloaded yet — the caller starts it with
@@ -1221,11 +1236,11 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
                   `Remove and recreate the job to seed again.`
               )
           }
-          job.seedCache()
+          runJobInBackground(job, job.seedCache())
         } else if (action === 'stop') {
           job.cancelJob()
         } else if (action === 'delete') {
-          job.deleteCache()
+          runJobInBackground(job, job.deleteCache())
         } else if (action === 'remove') {
           // Cancel first so an in-flight seed doesn't mutate the entry
           // after we drop it from the registry.
@@ -1316,6 +1331,45 @@ const resolveUniqueChartPaths = (
   return [...new Set(paths)]
 }
 
+// Returns the candidate path if it is an installed directory-format chart, or
+// null if it is safe to migrate as a legacy proxy cache. The discriminator is
+// the same marker the scanner uses (tilemapresource.xml / metadata.json): a
+// legacy PNG cache is a bare <z>/<x>/<y> tree with no marker, whereas an
+// installed TMS/XYZ chart has one. This stops the legacy-cache migration —
+// which walks and (with deleteSource) unlinks a <z>/<x>/<y> tree — from
+// cannibalising a user's installed chart, a real risk because the default
+// cachePath and the default chart path are the same directory and a directory
+// chart has the identical on-disk tile layout.
+const INSTALLED_CHART_MARKERS = ['tilemapresource.xml', 'metadata.json']
+
+// seedCache() and deleteCache() are fire-and-forget: the HTTP handler returns
+// 202 immediately and the work continues in the background. Both methods record
+// a failure on the job and reset its state internally, but the returned promise
+// still rejects on error — and an un-awaited rejected promise is an unhandled
+// rejection, which on Node 22+ terminates the whole Signal K server. This
+// attaches the terminal .catch() so a failed seed/delete degrades the job, not
+// the process.
+const runJobInBackground = (
+  job: { info: () => { id: number } },
+  work: Promise<void>
+): void => {
+  work.catch((err: Error) => {
+    console.error(
+      `[charts-plugin] background job ${job.info().id} failed: ${err.message}`
+    )
+  })
+}
+
+const resolveInstalledChartCollision = (candidate: string): string | null => {
+  const resolved = path.resolve(candidate)
+  for (const marker of INSTALLED_CHART_MARKERS) {
+    if (fs.existsSync(path.join(resolved, marker))) {
+      return resolved
+    }
+  }
+  return null
+}
+
 const convertOnlineProviderConfig = (provider: OnlineChartProvider) => {
   const id = _.kebabCase(_.deburr(provider.name))
 
@@ -1394,6 +1448,12 @@ const sanitizeProvider = (
   const out: SanitizedProvider = {}
   for (const [key, value] of Object.entries(provider)) {
     if (key.startsWith('_') || key === 'v1' || key === 'v2') continue
+    // remoteUrl / headers are the upstream proxy target and its request
+    // headers — for token providers these are getters that resolve a live
+    // bearer token. Clients fetch tiles through the proxy path (~tilePath~),
+    // never the upstream directly, so these must not appear in the public
+    // resources view; emitting them would leak the rotating credential.
+    if (key === 'remoteUrl' || key === 'headers') continue
     // Defang any string field that the webapp might later render via
     // innerHTML (Leaflet L.Control.Layers, custom tooltips, etc).
     if (

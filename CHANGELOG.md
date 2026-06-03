@@ -62,6 +62,30 @@ follow-on architectural cleanup. Highlights:
   in-flight token fetch instead of N parallel ones. An upstream
   401/403 invalidates the cached token so the next request refetches.
 
+### Fixed / Security
+
+- The legacy-cache migration endpoint now refuses a `sourceName` that
+  resolves onto an installed directory chart (one carrying
+  `tilemapresource.xml` / `metadata.json`). Because `cachePath` defaults
+  to the chart-scan path and directory charts share the
+  `<z>/<x>/<y>` tile layout the migrator walks, `deleteSource: true`
+  could otherwise have deleted a user's installed chart.
+- Seed and delete jobs are fire-and-forget; a failure inside one
+  (locked DB, disk error) is now caught and recorded on the job instead
+  of surfacing as an unhandled promise rejection, which on Node 22+
+  would terminate the Signal K server.
+- `remoteUrl` and request `headers` are no longer included in the
+  `/resources/charts` view. For token providers these resolve a live
+  bearer token; clients fetch tiles through the proxy path and never
+  need the upstream target, so exposing them leaked the credential.
+- `@signalk/mbtiles` (and its `node:sqlite` dependency) is loaded
+  lazily, so a server on Node < 22 shows the plugin's "requires Node
+  22" message instead of crashing on `ERR_UNKNOWN_BUILTIN_MODULE`
+  before the guard can run. `engines.node` is set accordingly.
+- The writable mbtiles handle attaches an `error` listener so a runtime
+  SQLite error (e.g. disk full on an SD card) is logged rather than
+  crashing the process.
+
 ### Migration / upgrade notes
 
 - On first start after upgrade, the plugin moves any pre-3.7
