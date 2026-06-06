@@ -337,6 +337,6 @@ describe('chartDownloaderTileHelpers: countTilesAdaptiveIterative', () => {
     }
     const count = countTilesAdaptiveIterative(degenerate, 3, 5)
     expect(Number.isFinite(count)).to.equal(true)
-    expect(count).to.be.greaterThanOrEqual(0)
+    expect(count).to.be.at.least(0)
   })
 })
