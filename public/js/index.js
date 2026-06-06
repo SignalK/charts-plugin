@@ -13,6 +13,19 @@ const JobType = Object.freeze({
   Delete: 2
 })
 
+// Chart source types this tool can prefetch ("seed"). Only proxied raster tile
+// sources have a {z}/{x}/{y} cache to fill; style / manifest types
+// (mapstyleJSON, tileJSON) and vector ENC (S-57) cannot be seeded, so they are
+// hidden from the chart picker and the preview map. Mirrors SEEDABLE_SOURCE_TYPES
+// in src/tileServer.ts (the server enforces the same rule); keep the two in sync.
+const SEEDABLE_CHART_TYPES = ['tilelayer', 'WMS', 'WMTS']
+
+function isSeedableChart(info) {
+  return (
+    !!info && info.proxy === true && SEEDABLE_CHART_TYPES.includes(info.type)
+  )
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
   await setupCharts()
 
@@ -208,7 +221,10 @@ async function setupCharts() {
         return na.localeCompare(nb)
       })
       .forEach(([id, info]) => {
-        if (info.proxy === true) {
+        // Only proxied raster tile charts can be seeded; skip style / vector
+        // sources (e.g. mapstyleJSON) so they aren't offered for a job that
+        // would only fail. See isSeedableChart.
+        if (isSeedableChart(info)) {
           const opt = document.createElement('option')
           opt.value = id
           opt.textContent = info && info.name ? info.name : id

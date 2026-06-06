@@ -501,6 +501,26 @@ describe('tile cache HTTP endpoints', () => {
     url: 'https://example.com/{z}/{x}/{y}.png',
     proxy: true
   }
+  // A proxied vector-style source: appears as a chart resource but has no tile
+  // pyramid to seed. Reproduces the mapstyleJSON case from issue #104.
+  const mapStyleProvider = {
+    name: 'Style Test',
+    minzoom: 3,
+    maxzoom: 5,
+    format: 'png',
+    url: 'https://example.com/style.json',
+    serverType: 'mapstyleJSON',
+    proxy: true
+  }
+  // A non-proxy provider has no upstream cache to seed.
+  const directProvider = {
+    name: 'Direct Test',
+    minzoom: 3,
+    maxzoom: 5,
+    format: 'png',
+    url: 'https://example.com/{z}/{x}/{y}.png',
+    proxy: false
+  }
 
   beforeEach(() =>
     createDefaultApp().then(({ app, server }) => {
@@ -644,6 +664,36 @@ describe('tile cache HTTP endpoints', () => {
     expect(res.body.totalTiles).to.be.greaterThan(0)
     // No auto-start: seeding is an explicit second step.
     expect(res.body.downloadedTiles).to.equal(0)
+  })
+
+  it('POST /cache/:identifier returns 400 for a mapstyleJSON provider', async () => {
+    // Issue #104: the chart is a valid resource and shows up in clients, but it
+    // has no raster tiles to prefetch, so the seed request must be rejected with
+    // a clear reason rather than spawning a doomed job.
+    await plugin.start({ onlineChartProviders: [mapStyleProvider] })
+    const res = await request
+      .execute(`http://localhost:${serverPort(testServer)}`)
+      .post('/signalk/chart-tiles/cache/style-test')
+      .send({
+        maxZoom: '5',
+        bbox: { minLon: 0, minLat: 0, maxLon: 1, maxLat: 1 }
+      })
+      .catch((e) => e.response)
+    expect(res.status).to.equal(400)
+    expect(res.text).to.include('mapstyleJSON')
+  })
+
+  it('POST /cache/:identifier returns 400 for a non-proxy provider', async () => {
+    await plugin.start({ onlineChartProviders: [directProvider] })
+    const res = await request
+      .execute(`http://localhost:${serverPort(testServer)}`)
+      .post('/signalk/chart-tiles/cache/direct-test')
+      .send({
+        maxZoom: '5',
+        bbox: { minLon: 0, minLat: 0, maxLon: 1, maxLat: 1 }
+      })
+      .catch((e) => e.response)
+    expect(res.status).to.equal(400)
   })
 
   it('POST /cache/jobs/:id returns 400 on a non-numeric job id', async () => {

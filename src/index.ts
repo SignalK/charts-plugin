@@ -33,6 +33,7 @@ import {
   serveTileFromMbtiles,
   validateBBox,
   validateMaxZoom,
+  validateSeedableProvider,
   validateTileCoords
 } from './tileServer'
 import { Request, Response, Application } from 'express'
@@ -1155,6 +1156,14 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
         const provider = chartProviders[identifier]
         if (!provider) {
           return res.status(404).send('Provider not found')
+        }
+        // Reject providers that can't be tile-seeded (non-proxy, or a style /
+        // vector type such as mapstyleJSON) with a clear 400 rather than
+        // creating a job that fails every tile. The webapp already hides these
+        // from the picker; this guards direct API callers.
+        const seedableError = validateSeedableProvider(provider)
+        if (seedableError) {
+          return res.status(400).send(seedableError)
         }
         if (!maxZoom) {
           return res.status(400).send('maxZoom parameter is required')
