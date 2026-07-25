@@ -10,12 +10,15 @@ import {
   MAX_ZOOM,
   MIN_TILE_Z,
   MIN_ZOOM,
+  SEEDABLE_SOURCE_TYPES,
   isAllowedTileFormat,
   isMbtilesTileMissing,
   validateBBox,
   validateMaxZoom,
+  validateSeedableProvider,
   validateTileCoords
 } from '../src/tileServer'
+import { ChartProvider, MapSourceType } from '../src/types'
 
 describe('tileServer: validateTileCoords', () => {
   it('accepts a valid coordinate', () => {
@@ -170,5 +173,56 @@ describe('tileServer: isMbtilesTileMissing', () => {
 
   it('does not match unrelated errors', () => {
     expect(isMbtilesTileMissing(new Error('SQLITE_CORRUPT'))).to.equal(false)
+  })
+})
+
+describe('tileServer: validateSeedableProvider', () => {
+  const provider = (type: MapSourceType, proxy: boolean): ChartProvider => ({
+    _filePath: '',
+    identifier: 'test-chart',
+    name: 'Test Chart',
+    description: '',
+    type,
+    scale: 250000,
+    proxy
+  })
+
+  it('accepts proxied raster tile types', () => {
+    expect(validateSeedableProvider(provider('tilelayer', true))).to.equal(
+      undefined
+    )
+    expect(validateSeedableProvider(provider('WMS', true))).to.equal(undefined)
+    expect(validateSeedableProvider(provider('WMTS', true))).to.equal(undefined)
+  })
+
+  it('rejects a proxied mapstyleJSON source (the reported case)', () => {
+    // A vector style document has no {z}/{x}/{y} pyramid to prefetch; offering
+    // it for seeding only produces a job that fails every tile.
+    const err = validateSeedableProvider(provider('mapstyleJSON', true))
+    expect(err).to.be.a('string')
+    expect(err).to.include('mapstyleJSON')
+  })
+
+  it('rejects proxied tileJSON and S-57 sources', () => {
+    expect(validateSeedableProvider(provider('tileJSON', true))).to.be.a(
+      'string'
+    )
+    expect(validateSeedableProvider(provider('S-57', true))).to.be.a('string')
+  })
+
+  it('rejects a non-proxy provider regardless of type', () => {
+    // Without proxy there is no upstream remoteUrl to fetch tiles from.
+    const err = validateSeedableProvider(provider('tilelayer', false))
+    expect(err).to.be.a('string')
+    expect(err).to.match(/proxied|proxy/i)
+  })
+
+  it('exposes exactly the raster tile types as seedable', () => {
+    expect([...SEEDABLE_SOURCE_TYPES].sort()).to.deep.equal([
+      'WMS',
+      'WMTS',
+      'tilelayer'
+    ])
+    expect(SEEDABLE_SOURCE_TYPES.has('mapstyleJSON')).to.equal(false)
   })
 })

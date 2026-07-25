@@ -3,6 +3,7 @@ import { XMLParser } from 'fast-xml-parser'
 import { Dirent, promises as fs } from 'fs'
 import pLimit from 'p-limit'
 import { ChartProvider, MBTilesHandle, MBTilesMetadata } from './types'
+import { EXPORTS_DIR, WORKING_DIR } from './cacheLayout'
 
 // Parses tilemapresource.xml into a plain object. ignoreAttributes=false and
 // attributeNamePrefix='' drop the default '@_' prefix so XML attributes show
@@ -59,11 +60,15 @@ async function loadMBTiles() {
 // Recursively scans chartBaseDir and any non-chart subdirectories. A directory
 // is treated as a chart if it has tilemapresource.xml or metadata.json; anything
 // else is descended into so layouts like charts/<region>/<chart> work without
-// having to list every subdir in the plugin config. Symlinks are skipped and
-// the depth is bounded so a misplaced config entry can't send the scan into
-// node_modules or a symlink loop. File parsing (openMbtilesFile /
-// directoryToMapInfo) runs concurrently under a global limiter — 500 MBTiles
-// opened serially on a Pi SD card was a 5-30s startup stall.
+// having to list every subdir in the plugin config.
+// Symlinks are skipped and the depth is bounded so a misplaced config entry
+// can't send the scan into node_modules or a symlink loop. File parsing
+// (openMbtilesFile / directoryToMapInfo) runs concurrently under a global
+// limiter — 500 MBTiles opened serially on a Pi SD card produces a 5-30s
+// startup stall.
+// Only mbtiles files and tile-format directories are recognised. Providers
+// that need runtime-computed URLs are configured declaratively via
+// `tokenProviders` in plugin settings (see src/tokenProvider.ts).
 const MAX_SCAN_DEPTH = 8
 const PARSE_CONCURRENCY = 12
 
@@ -116,6 +121,21 @@ async function scanDir(
   const tasks: Promise<void>[] = []
   for (const entry of entries) {
     if (entry.isSymbolicLink()) continue
+    // Plugin-managed directories that share the cache root with chart paths.
+    // `.working/` holds proxy-cache mbtiles being written to by the
+    // ChartDownloader (must not be opened read-only by the scanner).
+    // `exports/` holds region snapshots intended for offline transfer
+    // (USB stick to another SK server) and is excluded so the file
+    // isn't auto-picked-up while the user is preparing it. The
+    // dot-prefix is also a cross-platform "ignore me" convention.
+    if (
+      depth === 0 &&
+      (entry.name === WORKING_DIR ||
+        entry.name === EXPORTS_DIR ||
+        entry.name.startsWith('.'))
+    ) {
+      continue
+    }
     const entryPath = path.resolve(dir, entry.name)
     if (entry.name.match(/\.mbtiles$/i)) {
       if (mbtilesLoadError) {
