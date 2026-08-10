@@ -1,7 +1,7 @@
 import path from 'path'
 import { Response } from 'express'
 import { OutgoingHttpHeaders } from 'http'
-import { ChartProvider } from './types'
+import { ChartProvider, MapSourceType } from './types'
 import { ChartDownloader } from './chartDownloader'
 
 /**
@@ -101,6 +101,38 @@ export const validateBBox = (bbox: {
   return undefined
 }
 
+// Chart source types whose tiles can be prefetched ("seeded"). Seeding walks a
+// raster tile pyramid and fetches each {z}/{x}/{y} (or {bbox}) tile from the
+// proxied upstream, so it only applies to raster tile sources. mapstyleJSON and
+// tileJSON describe a style / source manifest, and S-57 is a vector ENC — none
+// expose a per-tile pyramid to cache. Mirrored by SEEDABLE_CHART_TYPES in
+// public/js/index.js, which hides un-seedable charts from the seed picker;
+// keep the two lists in sync.
+export const SEEDABLE_SOURCE_TYPES: ReadonlySet<MapSourceType> = new Set([
+  'tilelayer',
+  'WMS',
+  'WMTS'
+])
+
+// Validates that a provider can actually be tile-seeded, mirroring the
+// validateMaxZoom / validateBBox contract (error string, or undefined when OK)
+// so the seed endpoint can answer with a 400 and a clear reason instead of
+// creating a job that silently fails every tile: a non-proxy provider has no
+// upstream to fetch from, and a non-raster type has no tile pyramid to walk.
+export const validateSeedableProvider = (
+  provider: ChartProvider
+): string | undefined => {
+  if (provider.proxy !== true) {
+    return `Chart "${provider.identifier}" is not proxied, so there is no tile cache to seed. Enable "Proxy through SignalK server" for this provider.`
+  }
+  if (!SEEDABLE_SOURCE_TYPES.has(provider.type)) {
+    return `Chart type "${provider.type}" cannot be seeded. Seeding prefetches raster tiles; supported types are ${[
+      ...SEEDABLE_SOURCE_TYPES
+    ].join(', ')}.`
+  }
+  return undefined
+}
+
 export const serveTileFromFilesystem = (
   res: Response,
   provider: ChartProvider,
@@ -119,10 +151,10 @@ export const serveTileFromFilesystem = (
     _filePath,
     `${z}/${x}/${_flipY ? flippedY : y}.${normalizedFormat}`
   )
-  // sendFile already performs the stat and handles the error; the previous
-  // stat+access probe duplicated that work on every tile request. Its
-  // callback fires once per request with an err only when something went
-  // wrong (missing file, permission denied, header-already-sent aborts).
+  // sendFile performs its own stat + dotfile / range / etag handling and
+  // calls the completion callback once with an err only when something
+  // went wrong (missing file, permission denied, header-already-sent
+  // aborts). No need for a separate stat probe before sendFile.
   res.sendFile(file, responseHttpOptions, (err) => {
     if (!err) return
     const code = (err as NodeJS.ErrnoException).code
@@ -199,15 +231,15 @@ export const serveTileFromCacheOrRemote = async (
   x: number,
   y: number
 ) => {
-  const buffer = await ChartDownloader.getTileFromCacheOrRemote(
+  const tile = await ChartDownloader.getTileFromCacheOrRemote(
     cachePath,
     provider,
     { x, y, z }
   )
-  if (!buffer) {
+  if (!tile.buffer) {
     res.sendStatus(502)
     return
   }
   res.set('Content-Type', `image/${provider.format}`)
-  res.send(buffer)
+  res.send(tile.buffer)
 }
