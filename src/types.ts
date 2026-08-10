@@ -2,12 +2,7 @@ import type { OutgoingHttpHeaders } from 'http'
 import type { DatabaseSync } from 'node:sqlite'
 
 export type MapSourceType =
-  | 'tilelayer'
-  | 'S-57'
-  | 'WMS'
-  | 'WMTS'
-  | 'mapstyleJSON'
-  | 'tileJSON'
+  'tilelayer' | 'S-57' | 'WMS' | 'WMTS' | 'mapstyleJSON' | 'tileJSON'
 
 // Shape of the @signalk/mbtiles handle as the plugin uses it. The library is
 // CJS and untyped, so we describe the call sites rather than re-declaring the
