@@ -5,3 +5,4 @@ coverage
 plugin
 reports
 .stryker-tmp
+public/leaflet
