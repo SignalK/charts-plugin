@@ -7,7 +7,7 @@ import {
   MBTilesMetadata
 } from './types'
 import type { FeatureCollection, Polygon, Feature } from 'geojson'
-import { bbox } from '@turf/bbox'
+import bbox from '@turf/bbox'
 import booleanIntersects from '@turf/boolean-intersects'
 import {
   Tile,

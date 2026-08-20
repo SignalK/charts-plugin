@@ -8,7 +8,7 @@ import type {
 } from 'geojson'
 import splitGeoJSON from 'geojson-antimeridian-cut'
 import booleanIntersects from '@turf/boolean-intersects'
-import { bbox } from '@turf/bbox'
+import bbox from '@turf/bbox'
 import { polygon } from '@turf/helpers'
 
 export interface Tile {
