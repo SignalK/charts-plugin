@@ -75,9 +75,23 @@ For WMS & WMTS sources you can specify the layers you wish to display.
 
 <img src="https://github.com/user-attachments/assets/b9bfba38-8468-4eca-aeb3-96a80fcbc7a6" alt="Online chart provider layers" width="450"/>
 
-A proxy for online charts can be created using the "Proxy through SignalK server" option. If enabled tiles will be fetched from the remote server and cached by the SignalK server making it possible to store the tiles for offline usage. Additional http headers can be passed to the remote server by adding colon separated headers, e.g. User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64). User-Agent is the header name and Mozilla... will be the value.
+A proxy for online charts can be created using the "Proxy through SignalK server" option. If enabled tiles will be fetched from the remote server and, by default, cached by the SignalK server making it possible to store the tiles for offline usage. Additional http headers can be passed to the remote server by adding colon separated headers, e.g. User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64). User-Agent is the header name and Mozilla... will be the value.
 
 #### Proxy without a tile cache
+
+The proxy can be needed even when server-side tile caching is not wanted. For
+example, a chart application opened over HTTPS cannot normally load tiles
+directly from an HTTP-only chart service: the browser blocks them as
+[mixed content](https://developer.mozilla.org/en-US/docs/Web/Security/Defenses/Mixed_content).
+The same source may work when the application is opened over HTTP, but fail when
+opened over HTTPS. Disabling the proxy makes the browser contact the tile service
+directly and exposes it to this restriction.
+
+Keeping the proxy enabled lets the browser request tiles through the Signal K
+origin, using HTTPS when the application is served over HTTPS, while Signal K
+fetches the HTTP source on the server. Disabling only tile caching preserves this
+access without duplicating an upstream cache or storing tiles on the Signal K
+server.
 
 Keep **Proxy through SignalK server** enabled and disable **Cache proxied tiles**
 for an online provider to forward every tile request without reading or writing
