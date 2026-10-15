@@ -265,13 +265,6 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
                 'Serve remote tiles through the Signal K server. Tiles are cached unless "Cache proxied tiles" is disabled. Only meaningful for tilelayer / WMS / WMTS providers; mapstyleJSON and tileJSON providers describe style/source manifests.',
               default: false
             },
-            cacheEnabled: {
-              type: 'boolean',
-              title: 'Cache proxied tiles',
-              description:
-                'Store and reuse proxied tiles on the server for offline use. Disable to fetch every tile request from the remote server without reading or writing the tile cache. Requires proxy. Existing cache files are kept. Does not change browser caching.',
-              default: true
-            },
             headers: {
               type: 'array',
               title: 'Headers',
@@ -302,6 +295,25 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
                   'Map layer id to display (use with WMS / WMTS types).',
                 type: 'string'
               }
+            }
+          },
+          dependencies: {
+            proxy: {
+              oneOf: [
+                { properties: { proxy: { const: false } } },
+                {
+                  properties: {
+                    proxy: { const: true },
+                    cacheEnabled: {
+                      type: 'boolean',
+                      title: 'Cache proxied tiles',
+                      description:
+                        'Store and reuse proxied tiles on the server for offline use. Disable to fetch every tile request from the remote server without reading or writing the tile cache. Existing cache files are kept. Does not change browser caching.',
+                      default: true
+                    }
+                  }
+                }
+              ]
             }
           }
         }
@@ -423,7 +435,24 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
     }
   })
 
-  const CONFIG_UISCHEMA = {}
+  const CONFIG_UISCHEMA = {
+    onlineChartProviders: {
+      items: {
+        'ui:order': [
+          'name',
+          'description',
+          'minzoom',
+          'maxzoom',
+          'serverType',
+          'format',
+          'url',
+          'proxy',
+          'cacheEnabled',
+          '*'
+        ]
+      }
+    }
+  }
 
   const plugin: Plugin = {
     id: 'charts',

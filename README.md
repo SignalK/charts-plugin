@@ -95,7 +95,8 @@ server.
 
 Keep **Proxy through SignalK server** enabled and disable **Cache proxied tiles**
 for an online provider to forward every tile request without reading or writing
-its server-side MBTiles cache:
+its server-side MBTiles cache. The **Cache proxied tiles** option is only shown
+when **Proxy through SignalK server** is enabled:
 
 ```json
 {
