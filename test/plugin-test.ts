@@ -155,6 +155,7 @@ describe('GET /resources/charts', () => {
           minzoom: 2,
           name: 'Test Name',
           proxy: false,
+          cacheEnabled: true,
           scale: 250000,
           style: null,
           tilemapUrl: 'https://example.com',
@@ -487,6 +488,203 @@ describe('chart folder watcher', function () {
     response = await get(testServer, '/signalk/v1/api/resources/charts')
     expect(Object.keys(response.body)).to.include('stable')
     expect(Object.keys(response.body)).to.not.include('broken')
+  })
+})
+
+describe('proxy tile caching policy', () => {
+  let plugin: PluginInstance
+  let testServer: http.Server
+  let upstream: http.Server
+  let cachePath: string
+  let tileRequests: number
+  let tokenRequests: number
+  let upstreamStatus: number
+  let receivedHeader: string | string[] | undefined
+  let receivedUrl: string | undefined
+  let resourceRegistrations: number
+
+  beforeEach(async () => {
+    const { app, server } = await createDefaultApp()
+    resourceRegistrations = 0
+    Object.assign(app.config, { version: '2.33.0' })
+    Object.assign(app, {
+      registerResourceProvider: () => resourceRegistrations++
+    })
+    plugin = asPluginApp(app)
+    testServer = server
+    cachePath = fs.mkdtempSync(path.join(os.tmpdir(), 'charts-proxy-policy-'))
+    tileRequests = 0
+    tokenRequests = 0
+    upstreamStatus = 200
+    upstream = http.createServer((req, res) => {
+      if (req.url === '/token') {
+        tokenRequests++
+        res.setHeader('Content-Type', 'application/json')
+        res.end(JSON.stringify({ access: 'test-token' }))
+        return
+      }
+      tileRequests++
+      receivedHeader = req.headers['x-chart-test']
+      receivedUrl = req.url
+      res.writeHead(upstreamStatus, { 'Content-Type': 'image/png' })
+      res.end(`tile-${tileRequests}`)
+    })
+    await new Promise<void>((resolve) =>
+      upstream.listen(0, '127.0.0.1', resolve)
+    )
+  })
+
+  afterEach(async () => {
+    plugin.stop()
+    await Promise.all(
+      [testServer, upstream].map(
+        (server) =>
+          new Promise<void>((resolve) => server.close(() => resolve()))
+      )
+    )
+    fs.rmSync(cachePath, { recursive: true, force: true })
+  })
+
+  const tileRoute = '/signalk/chart-tiles/proxy-policy/4/5/6'
+  const cachedTile = fs.readFileSync(
+    path.join(__dirname, 'charts/unpacked-tiles/4/5/6.png')
+  )
+  const cacheFile = () =>
+    path.join(cachePath, '.working/proxy-policy/cache.mbtiles')
+  const installCachedFixture = () => {
+    fs.mkdirSync(path.dirname(cacheFile()), { recursive: true })
+    fs.copyFileSync(path.join(__dirname, 'charts/test.mbtiles'), cacheFile())
+  }
+  const stop = async () => {
+    plugin.stop()
+    // MBTiles.close completes on setImmediate; wait before inspecting/reopening it.
+    await new Promise<void>((resolve) => setImmediate(resolve))
+  }
+  const start = (cacheEnabled?: boolean) =>
+    plugin.start({
+      chartPaths: [path.resolve(__dirname, '../src')],
+      cachePath,
+      onlineChartProviders: [
+        {
+          name: 'Proxy policy',
+          format: 'png',
+          serverType: 'tilelayer',
+          minzoom: 1,
+          maxzoom: 5,
+          proxy: true,
+          ...(cacheEnabled === undefined ? {} : { cacheEnabled }),
+          url: `http://127.0.0.1:${serverPort(upstream)}/{z}/{x}/{y}.png`,
+          headers: ['X-Chart-Test: preserved']
+        }
+      ]
+    })
+
+  for (const policy of [undefined, true]) {
+    it(`keeps persistent caching when cacheEnabled is ${policy}`, async () => {
+      await start(policy)
+      const first = await get(testServer, tileRoute)
+      expect(first.status).to.equal(200)
+      expect(fs.existsSync(cacheFile())).to.equal(true)
+      await stop()
+      installCachedFixture()
+      await start(policy)
+      const second = await get(testServer, tileRoute)
+      expect(second.status).to.equal(200)
+      expect(second.body.equals(cachedTile)).to.equal(true)
+      expect(tileRequests).to.equal(1)
+    })
+  }
+
+  it('fetches every request through the proxy without creating a tile cache', async () => {
+    await start(false)
+    const charts = await get(testServer, '/signalk/v1/api/resources/charts')
+    expect(charts.body['proxy-policy'].tilemapUrl).to.equal(
+      tileRoute.replace('4/5/6', '{z}/{x}/{y}')
+    )
+    expect(charts.body['proxy-policy'].cacheEnabled).to.equal(false)
+    const first = await get(testServer, tileRoute)
+    const second = await get(testServer, tileRoute)
+    expect(first.status).to.equal(200)
+    expect(first.body.toString()).to.equal('tile-1')
+    expect(second.status).to.equal(200)
+    expect(second.body.toString()).to.equal('tile-2')
+    expect(receivedHeader).to.equal('preserved')
+    expect(receivedUrl).to.equal('/4/5/6.png')
+    expect(tileRequests).to.equal(2)
+    expect(fs.readdirSync(cachePath)).to.deep.equal([])
+  })
+
+  it('ignores an existing cache without changing it, and can enable it again', async () => {
+    installCachedFixture()
+    const cachedBytes = fs.readFileSync(cacheFile())
+    await start(false)
+    const response = await get(testServer, tileRoute)
+    expect(response.status).to.equal(200)
+    expect(response.body.toString()).to.equal('tile-1')
+    expect(fs.readFileSync(cacheFile()).equals(cachedBytes)).to.equal(true)
+    await stop()
+    await start(true)
+    const restored = await get(testServer, tileRoute)
+    expect(restored.body.equals(cachedTile)).to.equal(true)
+    expect(tileRequests).to.equal(1)
+    expect(resourceRegistrations).to.equal(2)
+  })
+
+  it('reports an upstream failure without falling back to cached tiles', async () => {
+    installCachedFixture()
+    await start(false)
+    upstreamStatus = 404
+    const response = await get(testServer, tileRoute)
+    expect(response.status).to.equal(502)
+    expect(tileRequests).to.equal(1)
+    const stats = await get(testServer, '/signalk/chart-tiles/cache/stats')
+    expect(stats.body['proxy-policy'].failures).to.equal(1)
+  })
+
+  it('rejects seeding and migration while tile caching is disabled', async () => {
+    await start(false)
+    for (const route of ['proxy-policy', 'proxy-policy/migrate']) {
+      const response = await request
+        .execute(testServer)
+        .post(`/signalk/chart-tiles/cache/${route}`)
+        .send({
+          maxZoom: 2,
+          bbox: { minLon: 0, minLat: 0, maxLon: 1, maxLat: 1 }
+        })
+      expect(response.status).to.equal(400)
+      expect(response.text).to.match(/caching disabled|caching is disabled/i)
+    }
+    expect(fs.readdirSync(cachePath)).to.deep.equal([])
+    expect(tileRequests).to.equal(0)
+  })
+
+  it('keeps token authentication when only the tile cache is disabled', async () => {
+    const base = `http://127.0.0.1:${serverPort(upstream)}`
+    await plugin.start({
+      chartPaths: [path.resolve(__dirname, '../src')],
+      cachePath,
+      tokenProviders: [
+        {
+          identifier: 'proxy-policy',
+          name: 'Token proxy',
+          format: 'png',
+          cacheEnabled: false,
+          tokenEndpoint: { url: `${base}/token`, ttlSeconds: 600 },
+          tile: {
+            url: `${base}/{z}/{x}/{y}.png`,
+            headers: { 'X-Chart-Test': '{token.access}' }
+          }
+        }
+      ]
+    })
+    for (let i = 0; i < 2; i++) {
+      const response = await get(testServer, tileRoute)
+      expect(response.status).to.equal(200)
+    }
+    expect(tileRequests).to.equal(2)
+    expect(tokenRequests).to.equal(1)
+    expect(receivedHeader).to.equal('test-token')
+    expect(fs.readdirSync(cachePath)).to.deep.equal([])
   })
 })
 

@@ -94,6 +94,8 @@ export interface ChartProvider {
   style?: string
   layers?: string[]
   proxy?: boolean
+  // Defaults to true. False keeps the proxy but bypasses persistent tile storage.
+  cacheEnabled?: boolean
   remoteUrl?: string
   headers?: { [key: string]: string }
 }
@@ -107,6 +109,7 @@ export interface OnlineChartProvider {
   format: 'png' | 'jpg'
   url: string
   proxy: boolean
+  cacheEnabled?: boolean
   headers?: string[]
   style: string
   layers: string[]
@@ -120,6 +123,7 @@ export interface OnlineChartProvider {
 export interface TokenProviderConfig {
   identifier: string
   name: string
+  cacheEnabled?: boolean
   description?: string
   type?: MapSourceType
   format?: string

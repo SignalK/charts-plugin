@@ -125,6 +125,9 @@ export const validateSeedableProvider = (
   if (provider.proxy !== true) {
     return `Chart "${provider.identifier}" is not proxied, so there is no tile cache to seed. Enable "Proxy through SignalK server" for this provider.`
   }
+  if (provider.cacheEnabled === false) {
+    return `Chart "${provider.identifier}" has tile caching disabled. Enable "Cache proxied tiles" to seed it.`
+  }
   if (!SEEDABLE_SOURCE_TYPES.has(provider.type)) {
     return `Chart type "${provider.type}" cannot be seeded. Seeding prefetches raster tiles; supported types are ${[
       ...SEEDABLE_SOURCE_TYPES
