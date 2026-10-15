@@ -262,8 +262,15 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
               type: 'boolean',
               title: 'Proxy through signalk server',
               description:
-                'Create a proxy to serve remote tiles and cache fetched tiles from the remote server, to serve them locally on subsequent requests. Use webapp to configure seeding jobs to prefetch tiles to local cache. Only meaningful for tilelayer / WMS / WMTS providers; mapstyleJSON and tileJSON providers describe style/source manifests and have no per-tile cache to seed.',
+                'Serve remote tiles through the Signal K server. Tiles are cached unless "Cache proxied tiles" is disabled. Only meaningful for tilelayer / WMS / WMTS providers; mapstyleJSON and tileJSON providers describe style/source manifests.',
               default: false
+            },
+            cacheEnabled: {
+              type: 'boolean',
+              title: 'Cache proxied tiles',
+              description:
+                'Store and reuse proxied tiles on the server for offline use. Disable to fetch every tile request from the remote server without reading or writing the tile cache. Requires proxy. Existing cache files are kept. Does not change browser caching.',
+              default: true
             },
             headers: {
               type: 'array',
@@ -323,6 +330,13 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
                 'Stable ID used in tile URLs (URL-safe; e.g. "navionics").'
             },
             name: { type: 'string', title: 'Name' },
+            cacheEnabled: {
+              type: 'boolean',
+              title: 'Cache proxied tiles',
+              description:
+                'Store and reuse tiles on the server. Disable to bypass the tile cache while keeping the proxy and token refresh. Existing cache files are kept. Does not change browser caching.',
+              default: true
+            },
             description: { type: 'string', title: 'Description' },
             type: {
               type: 'string',
@@ -430,6 +444,8 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
         } provider(s) will be released)`
       )
       pluginActive = false
+      // Signal K unregisters resource providers when it stops a plugin.
+      providerRegistered = false
       stopWatchers()
       // Cancel any running seeding jobs so a disabled plugin doesn't keep
       // pulling tiles from remote providers in the background.
@@ -666,7 +682,7 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
     // Failure to open doesn't take the provider out — tile requests will
     // just always go remote.
     for (const provider of Object.values(nextChartProviders)) {
-      if (provider.proxy === true) {
+      if (provider.proxy === true && provider.cacheEnabled !== false) {
         try {
           provider._mbtilesHandle = await openOrCreateMbtiles(
             workingMbtilesPath(cachePath, provider.identifier),
@@ -960,6 +976,11 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
         const { identifier } = req.params
         const provider = chartProviders[identifier]
         if (!provider) return res.status(404).send('Provider not found')
+        if (provider.cacheEnabled === false) {
+          return res
+            .status(400)
+            .send('Tile caching is disabled for this provider.')
+        }
         if (!provider._mbtilesHandle) {
           return res
             .status(400)
@@ -1434,6 +1455,7 @@ const convertOnlineProviderConfig = (provider: OnlineChartProvider) => {
       layers: provider.layers ? provider.layers : null
     },
     proxy: provider.proxy ? provider.proxy : false,
+    cacheEnabled: provider.cacheEnabled !== false,
     remoteUrl: provider.proxy ? provider.url : null,
     headers: parseHeaders(provider.headers)
   }

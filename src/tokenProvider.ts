@@ -183,6 +183,7 @@ export function chartProviderFromTokenConfig(
     type: cfg.type ?? 'tilelayer',
     scale: cfg.scale ?? 250000,
     proxy: true,
+    cacheEnabled: cfg.cacheEnabled !== false,
     _filePath: '',
     _tokenProvider: tp
   }
@@ -240,6 +241,12 @@ export function validateTokenProviderConfig(
     throw new Error(`${where}: expected an object`)
   }
   const c = raw as Record<string, unknown>
+  if (
+    c['cacheEnabled'] !== undefined &&
+    typeof c['cacheEnabled'] !== 'boolean'
+  ) {
+    throw new Error(`${where}: cacheEnabled must be a boolean`)
+  }
   if (typeof c['identifier'] !== 'string' || c['identifier'].length === 0) {
     throw new Error(`${where}: identifier is required (non-empty string)`)
   }

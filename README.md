@@ -77,6 +77,30 @@ For WMS & WMTS sources you can specify the layers you wish to display.
 
 A proxy for online charts can be created using the "Proxy through SignalK server" option. If enabled tiles will be fetched from the remote server and cached by the SignalK server making it possible to store the tiles for offline usage. Additional http headers can be passed to the remote server by adding colon separated headers, e.g. User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64). User-Agent is the header name and Mozilla... will be the value.
 
+#### Proxy without a tile cache
+
+Keep **Proxy through SignalK server** enabled and disable **Cache proxied tiles**
+for an online provider to forward every tile request without reading or writing
+its server-side MBTiles cache:
+
+```json
+{
+  "proxy": true,
+  "cacheEnabled": false
+}
+```
+
+`cacheEnabled` defaults to `true` when omitted, preserving existing configurations.
+Existing cache files are retained and can be reused after caching is enabled again.
+Providers without tile caching are excluded from the seeding tool; seeding and
+legacy tile-cache migration requests are rejected for these providers.
+The proxy URL, URL placeholders, and upstream request headers still work.
+Tile responses still use the existing browser-cache behavior. Without a server tile
+cache, the upstream provider must be reachable for each request received by the proxy.
+
+The same `cacheEnabled` option is available on `tokenProviders`. It only controls
+the tile cache: token reuse and refresh still follow `tokenEndpoint.ttlSeconds`.
+
 #### URL placeholders
 
 The following placeholders are substituted in the chart URL when the proxy fetches each tile:
