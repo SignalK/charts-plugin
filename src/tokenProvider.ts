@@ -13,12 +13,14 @@
  * execution.
  */
 
+import type { ServerAPI } from '@signalk/server-api'
 import { ChartProvider, TokenProviderConfig } from './types'
 
 // Random-range placeholder used for sharded tile hostnames like
 // `tile{1-5}.host.com`. Inclusive on both ends.
 const RANGE_PLACEHOLDER = /\{(\d+)-(\d+)\}/g
 const TOKEN_PLACEHOLDER = /\{token\.([a-zA-Z0-9_]+)\}/g
+const RAW_TOKEN_PLACEHOLDER = /\{token\}/g
 
 // Strip query string and userinfo from a URL before logging. Token
 // endpoints commonly carry secrets in query params (?api_key=...) or
@@ -52,6 +54,10 @@ export class TokenProvider {
   // response are dropped during fetchToken to keep template substitution
   // unambiguous).
   private token: { [key: string]: string } = {}
+  // Whole response body for token endpoints that return a bare token (for
+  // example a plain JWT) rather than a JSON object. Available to templates
+  // as {token}.
+  private rawToken: string | null = null
   // Epoch-millis at which the cached token is considered stale. Zero forces
   // a fetch on the first ensureFreshToken() call.
   private tokenExpiry = 0
@@ -62,6 +68,7 @@ export class TokenProvider {
 
   constructor(
     private config: TokenProviderConfig,
+    private app: ServerAPI,
     private clock: TokenProviderClock = DEFAULT_CLOCK
   ) {}
 
@@ -93,12 +100,25 @@ export class TokenProvider {
   private async fetchToken(): Promise<void> {
     const ep = this.config.tokenEndpoint
     const timeoutMs = ep.timeoutMs ?? 10000
+    // Sharded token hosts (tile{1-5}.vendor.example) need the same range
+    // expansion as tile URLs; without it the braces reach the HTTP client
+    // as an invalid URL.
+    const url = this.applyRangeTemplate(ep.url)
+    const method = ep.method ?? 'GET'
+    // Debug trace for token-endpoint troubleshooting. This deliberately
+    // includes the response body, which is the token itself; only enable
+    // debug logging when diagnosing provider auth, not in normal operation.
+    this.app.debug(
+      `token request provider=${this.config.identifier} ` +
+        `method=${method} url=${redactUrl(url)} ` +
+        `headers=${JSON.stringify(ep.headers ?? {})}`
+    )
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
     let res: Response
     try {
-      res = await fetch(ep.url, {
-        method: ep.method ?? 'GET',
+      res = await fetch(url, {
+        method,
         headers: ep.headers,
         body: ep.body,
         signal: controller.signal
@@ -106,23 +126,44 @@ export class TokenProvider {
     } finally {
       clearTimeout(timer)
     }
+    this.app.debug(
+      `token response provider=${this.config.identifier} ` +
+        `status=${res.status} statusText=${res.statusText} ` +
+        `headers=${JSON.stringify(Object.fromEntries(res.headers.entries()))}`
+    )
+    const bodyText = await res.text()
+    this.app.debug(
+      `token response body provider=${this.config.identifier}: ${bodyText}`
+    )
     if (!res.ok) {
       // Avoid embedding the full URL in the error: token endpoints often
       // carry secrets in query params, and this message lands in
       // ensureFreshToken's console.warn.
-      throw new Error(
-        `token endpoint ${redactUrl(ep.url)} returned ${res.status}`
-      )
+      throw new Error(`token endpoint ${redactUrl(url)} returned ${res.status}`)
     }
-    const data = (await res.json()) as unknown
-    if (typeof data !== 'object' || data === null) {
-      throw new Error(`token endpoint ${redactUrl(ep.url)} returned non-object`)
+    let data: unknown
+    let isJson = true
+    try {
+      data = JSON.parse(bodyText)
+    } catch {
+      isJson = false
     }
-    const next: { [key: string]: string } = {}
-    for (const [k, v] of Object.entries(data)) {
-      if (typeof v === 'string') next[k] = v
+    if (isJson) {
+      if (typeof data !== 'object' || data === null) {
+        throw new Error(`token endpoint ${redactUrl(url)} returned non-object`)
+      }
+      const next: { [key: string]: string } = {}
+      for (const [k, v] of Object.entries(data)) {
+        if (typeof v === 'string') next[k] = v
+      }
+      this.token = next
+      this.rawToken = null
+    } else {
+      // Some endpoints return the token as the entire body with no JSON
+      // envelope (for example a bare JWT). Treat the body as the token.
+      this.token = {}
+      this.rawToken = bodyText.trim()
     }
-    this.token = next
     this.tokenExpiry = this.clock.now() + ep.ttlSeconds * 1000
   }
 
@@ -153,14 +194,23 @@ export class TokenProvider {
   // random integer in [a, b]. Token comes first so a sharded hostname
   // referenced inside a token field still randomises correctly.
   private applyTemplates(s: string): string {
-    return s
-      .replace(TOKEN_PLACEHOLDER, (_, key: string) => this.token[key] ?? '')
-      .replace(RANGE_PLACEHOLDER, (_, lo: string, hi: string) => {
-        const a = parseInt(lo, 10)
-        const b = parseInt(hi, 10)
-        const span = b - a + 1
-        return String(a + Math.floor(this.clock.rand() * span))
-      })
+    return this.applyRangeTemplate(
+      s
+        .replace(TOKEN_PLACEHOLDER, (_, key: string) => this.token[key] ?? '')
+        .replace(RAW_TOKEN_PLACEHOLDER, () => this.rawToken ?? '')
+    )
+  }
+
+  // Substitute {<a>-<b>} with a random integer in [a, b]. Shared by the tile
+  // templates and the token endpoint URL, both of which may use sharded
+  // hostnames like tile{1-5}.host.
+  private applyRangeTemplate(s: string): string {
+    return s.replace(RANGE_PLACEHOLDER, (_, lo: string, hi: string) => {
+      const a = parseInt(lo, 10)
+      const b = parseInt(hi, 10)
+      const span = b - a + 1
+      return String(a + Math.floor(this.clock.rand() * span))
+    })
   }
 }
 
@@ -173,9 +223,10 @@ export class TokenProvider {
  * before the fetch.
  */
 export function chartProviderFromTokenConfig(
-  cfg: TokenProviderConfig
+  cfg: TokenProviderConfig,
+  app: ServerAPI
 ): ChartProvider {
-  const tp = new TokenProvider(cfg)
+  const tp = new TokenProvider(cfg, app)
   const provider: ChartProvider = {
     identifier: cfg.identifier,
     name: cfg.name,
