@@ -15,6 +15,7 @@ import {
   validateTokenProviderConfig
 } from '../src/tokenProvider'
 import { ChartDownloader, ChartSeedingManager } from '../src/chartDownloader'
+import type { ServerAPI } from '@signalk/server-api'
 import type { TokenProviderConfig } from '../src/types'
 
 // Reset module-level statics on ChartDownloader before each test so
@@ -41,6 +42,19 @@ const BASE_CONFIG: TokenProviderConfig = {
     headers: { Authorization: 'Bearer {token.access}' }
   }
 }
+
+// Bare app stand-in for the provider's debug logging.
+const testApp = {
+  debug: Object.assign(() => {}, { enabled: false })
+} as unknown as ServerAPI
+
+const makeTokenProvider = (
+  config: TokenProviderConfig,
+  app: ServerAPI = testApp
+) => new TokenProvider(config, app)
+
+const makeChartProvider = (config: TokenProviderConfig) =>
+  chartProviderFromTokenConfig(config, testApp)
 
 // Stub global fetch with a recording mock that returns programmable bodies.
 // Restored in afterEach so tests don't leak.
@@ -81,7 +95,7 @@ describe('TokenProvider: token TTL cache', () => {
       jsonResponse({ access: 'abc', other: 'xyz' })
     )
     try {
-      const dp = new TokenProvider({ ...BASE_CONFIG })
+      const dp = makeTokenProvider({ ...BASE_CONFIG })
       await dp.ensureFreshToken()
       await dp.ensureFreshToken()
       await dp.ensureFreshToken()
@@ -93,11 +107,51 @@ describe('TokenProvider: token TTL cache', () => {
     }
   })
 
+  it('emits request and response details through the injected app logger', async () => {
+    const messages: string[] = []
+    const app = {
+      debug: (message: string) => messages.push(message),
+      enabled: false
+    } as unknown as ServerAPI
+    const mock = installFetchMock(() => jsonResponse({ access: 'abc' }))
+    try {
+      const dp = makeTokenProvider({ ...BASE_CONFIG }, app)
+      await dp.ensureFreshToken()
+      expect(messages).to.have.length(3)
+      expect(messages[0]).to.contain('token request provider=test')
+      expect(messages[1]).to.contain('token response provider=test status=200')
+      expect(messages[2]).to.contain(
+        'token response body provider=test: {"access":"abc"}'
+      )
+    } finally {
+      mock.restore()
+    }
+  })
+
+  it('expands sharded-host ranges in the token endpoint URL', async () => {
+    const mock = installFetchMock(() => jsonResponse({ access: 'abc' }))
+    try {
+      const dp = makeTokenProvider({
+        ...BASE_CONFIG,
+        tokenEndpoint: {
+          ...BASE_CONFIG.tokenEndpoint,
+          url: 'https://token{1-3}.example.com/issue'
+        }
+      })
+      await dp.ensureFreshToken()
+      expect(mock.calls[0]!.url).to.match(
+        /^https:\/\/token[1-3]\.example\.com\/issue$/
+      )
+    } finally {
+      mock.restore()
+    }
+  })
+
   it('refetches after the TTL expires', async () => {
     const mock = installFetchMock(() => jsonResponse({ access: 'abc' }))
     try {
       // 1ms TTL so we don't have to mock Date.now.
-      const dp = new TokenProvider({
+      const dp = makeTokenProvider({
         ...BASE_CONFIG,
         tokenEndpoint: { ...BASE_CONFIG.tokenEndpoint, ttlSeconds: 0.001 }
       })
@@ -132,7 +186,7 @@ describe('TokenProvider: token TTL cache', () => {
         )
     )
     try {
-      const dp = new TokenProvider({ ...BASE_CONFIG })
+      const dp = makeTokenProvider({ ...BASE_CONFIG })
       await Promise.all([
         dp.ensureFreshToken(),
         dp.ensureFreshToken(),
@@ -150,7 +204,7 @@ describe('TokenProvider: token TTL cache', () => {
   it('invalidateToken forces the next call to refetch', async () => {
     const mock = installFetchMock(() => jsonResponse({ access: 'abc' }))
     try {
-      const dp = new TokenProvider({ ...BASE_CONFIG })
+      const dp = makeTokenProvider({ ...BASE_CONFIG })
       await dp.ensureFreshToken()
       dp.invalidateToken()
       await dp.ensureFreshToken()
@@ -163,7 +217,7 @@ describe('TokenProvider: token TTL cache', () => {
   it('does not throw when the token endpoint returns 5xx', async () => {
     const mock = installFetchMock(() => jsonResponse({ err: 'down' }, 503))
     try {
-      const dp = new TokenProvider({ ...BASE_CONFIG })
+      const dp = makeTokenProvider({ ...BASE_CONFIG })
       // ensureFreshToken swallows errors so the tile fetch path can decide
       // whether to retry. Throwing here would crash unrelated tile reads.
       await dp.ensureFreshToken()
@@ -188,7 +242,7 @@ describe('TokenProvider: token TTL cache', () => {
         : jsonResponse({ access: 'now-ok' })
     })
     try {
-      const dp = new TokenProvider({ ...BASE_CONFIG })
+      const dp = makeTokenProvider({ ...BASE_CONFIG })
       await dp.ensureFreshToken() // 503, swallowed
       expect(dp.resolveUrl()).to.match(/t=$/) // empty token
       await dp.ensureFreshToken() // 200, refetched
@@ -201,12 +255,36 @@ describe('TokenProvider: token TTL cache', () => {
 })
 
 describe('TokenProvider: template substitution', () => {
+  it('uses a non-JSON response body as the raw {token}', async () => {
+    const mock = installFetchMock(
+      () => new Response('RAW-JWT-TOKEN', { status: 200 })
+    )
+    try {
+      const dp = makeTokenProvider({
+        ...BASE_CONFIG,
+        tile: {
+          url: 'https://h.example.com/?navtoken={token}',
+          headers: { Authorization: 'Bearer {token}' }
+        }
+      })
+      await dp.ensureFreshToken()
+      expect(dp.resolveUrl()).to.equal(
+        'https://h.example.com/?navtoken=RAW-JWT-TOKEN'
+      )
+      expect(dp.resolveHeaders()).to.deep.equal({
+        Authorization: 'Bearer RAW-JWT-TOKEN'
+      })
+    } finally {
+      mock.restore()
+    }
+  })
+
   it('substitutes {token.<field>} from the cached token', async () => {
     const mock = installFetchMock(() =>
       jsonResponse({ access: 'AT', config: 'CT' })
     )
     try {
-      const dp = new TokenProvider({
+      const dp = makeTokenProvider({
         ...BASE_CONFIG,
         tile: {
           url: 'https://h.example.com/?a={token.access}&c={token.config}',
@@ -224,7 +302,7 @@ describe('TokenProvider: template substitution', () => {
   it('substitutes a missing token field with empty string', async () => {
     const mock = installFetchMock(() => jsonResponse({}))
     try {
-      const dp = new TokenProvider({ ...BASE_CONFIG })
+      const dp = makeTokenProvider({ ...BASE_CONFIG })
       await dp.ensureFreshToken()
       // Empty token: {token.access} resolves to '', range still randomises.
       const url = dp.resolveUrl()
@@ -235,7 +313,7 @@ describe('TokenProvider: template substitution', () => {
   })
 
   it('substitutes {a-b} with an integer in the inclusive range', () => {
-    const dp = new TokenProvider({
+    const dp = makeTokenProvider({
       ...BASE_CONFIG,
       tile: { url: 'https://t{1-5}.example.com/' }
     })
@@ -261,7 +339,7 @@ describe('TokenProvider: template substitution', () => {
       jsonResponse({ access: 'AT', expires_in: 3600, scopes: ['read'] })
     )
     try {
-      const dp = new TokenProvider({
+      const dp = makeTokenProvider({
         ...BASE_CONFIG,
         tile: {
           url: 'https://h.example.com/?a={token.access}&e={token.expires_in}'
@@ -336,7 +414,7 @@ describe('TokenProvider: validateTokenProviderConfig', () => {
 
 describe('chartProviderFromTokenConfig', () => {
   it('exposes proxy=true and a stable identifier', () => {
-    const provider = chartProviderFromTokenConfig(BASE_CONFIG)
+    const provider = makeChartProvider(BASE_CONFIG)
     expect(provider.proxy).to.equal(true)
     expect(provider.identifier).to.equal('test')
     expect(provider.type).to.equal('tilelayer')
@@ -345,7 +423,7 @@ describe('chartProviderFromTokenConfig', () => {
   it('exposes remoteUrl and headers as live getters tied to the cached token', async () => {
     const mock = installFetchMock(() => jsonResponse({ access: 'AT-1' }))
     try {
-      const provider = chartProviderFromTokenConfig({
+      const provider = makeChartProvider({
         ...BASE_CONFIG,
         tokenEndpoint: { ...BASE_CONFIG.tokenEndpoint, ttlSeconds: 0.001 }
       })
@@ -378,7 +456,7 @@ describe('ChartDownloader.fetchTileFromRemote with a token provider', () => {
       return new Response('', { status: 404 })
     })
     try {
-      const provider = chartProviderFromTokenConfig({ ...BASE_CONFIG })
+      const provider = makeChartProvider({ ...BASE_CONFIG })
       const buf = await ChartDownloader.fetchTileFromRemote(provider, {
         x: 1,
         y: 2,
@@ -410,7 +488,7 @@ describe('ChartDownloader.fetchTileFromRemote with a token provider', () => {
       return new Response('', { status: 401 })
     })
     try {
-      const provider = chartProviderFromTokenConfig({ ...BASE_CONFIG })
+      const provider = makeChartProvider({ ...BASE_CONFIG })
       // First fetch: token issued (T1), tile request 401s, token invalidated.
       await ChartDownloader.fetchTileFromRemote(provider, { x: 1, y: 2, z: 3 })
       expect(tokenFetches, 'first token fetch').to.equal(1)
@@ -439,7 +517,7 @@ describe('ChartDownloader.fetchTileFromRemote with a token provider', () => {
       return new Response('', { status: 403 })
     })
     try {
-      const provider = chartProviderFromTokenConfig({ ...BASE_CONFIG })
+      const provider = makeChartProvider({ ...BASE_CONFIG })
       await ChartDownloader.fetchTileFromRemote(provider, { x: 1, y: 2, z: 3 })
       await ChartDownloader.fetchTileFromRemote(provider, { x: 1, y: 2, z: 3 })
       expect(tokenFetches).to.equal(2)
@@ -458,7 +536,7 @@ describe('ChartDownloader.fetchTileFromRemote with a token provider', () => {
       return new Response('', { status: 503 })
     })
     try {
-      const provider = chartProviderFromTokenConfig({ ...BASE_CONFIG })
+      const provider = makeChartProvider({ ...BASE_CONFIG })
       await ChartDownloader.fetchTileFromRemote(provider, { x: 1, y: 2, z: 3 })
       await ChartDownloader.fetchTileFromRemote(provider, { x: 1, y: 2, z: 3 })
       // 5xx isn't an auth failure; refetching the token wouldn't help, so

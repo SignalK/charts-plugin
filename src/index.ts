@@ -510,7 +510,7 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
       const raw = (props.tokenProviders ?? [])[i]
       try {
         const cfg = validateTokenProviderConfig(raw, i)
-        const provider = chartProviderFromTokenConfig(cfg)
+        const provider = chartProviderFromTokenConfig(cfg, app)
         if (activeTokenProviders[provider.identifier]) {
           app.debug(
             `Duplicate token provider identifier "${provider.identifier}"; ` +
