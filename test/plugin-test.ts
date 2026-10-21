@@ -258,6 +258,34 @@ describe('GET /resources/charts', () => {
   })
 })
 
+describe('resource provider registration', () => {
+  let plugin: PluginInstance
+  let testServer: http.Server
+  let testApp: TestApp
+
+  beforeEach(() =>
+    createDefaultApp().then(({ app, server }) => {
+      plugin = asPluginApp(app)
+      testServer = server
+      testApp = app
+    })
+  )
+  afterEach((done) => {
+    if (plugin && plugin.stop) plugin.stop()
+    testServer.close(() => done())
+  })
+
+  it('re-registers the charts resource provider after a stop/start cycle', async () => {
+    await plugin.start({})
+    expect(testApp.resourceProviderRegistrations).to.equal(1)
+
+    plugin.stop()
+    await plugin.start({})
+
+    expect(testApp.resourceProviderRegistrations).to.equal(2)
+  })
+})
+
 describe('GET /signalk/chart-tiles/:identifier/:z/:x/:y', () => {
   let plugin: PluginInstance
   let testServer: http.Server
@@ -1168,18 +1196,24 @@ const expectTileResponse = (
 interface TestApp extends express.Express {
   debug: (...msg: unknown[]) => void
   error: (msg: string) => void
-  config: { configPath: string }
+  config: { configPath: string; version: string }
   statusMessage: () => string
   setPluginStatus: (pluginId: string, status: string) => void
   setPluginError: (pluginId: string, status: string) => void
   getDataDirPath: () => string
+  registerResourceProvider: (provider: object) => void
+  resourceProviderRegistrations: number
   lastPluginStatus?: string
 }
 
 const createDefaultApp = (): Promise<{ app: TestApp; server: http.Server }> => {
   const app = express() as TestApp
   app.use(express.json())
-  app.config = { configPath: path.resolve(__dirname) }
+  app.config = { configPath: path.resolve(__dirname), version: '2.0.0' }
+  app.resourceProviderRegistrations = 0
+  app.registerResourceProvider = () => {
+    app.resourceProviderRegistrations++
+  }
   app.statusMessage = () => 'started'
   app.error = () => undefined
   app.debug = () => undefined

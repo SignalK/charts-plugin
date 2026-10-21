@@ -451,6 +451,10 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
       chartProviders = {}
       sanitizedV1 = {}
       sanitizedV2 = {}
+      // Signal K unregisters a plugin's resource providers when it stops and
+      // may hand the `charts` default to another plugin. Re-register on the
+      // next start; the resource registry replaces by plugin id.
+      providerRegistered = false
       app.setPluginStatus('stopped')
     }
   }
