@@ -168,6 +168,32 @@ describe('chartDownloader: getTilesForGeoJSON', () => {
 })
 
 describe('chartDownloader: fetchTileFromRemote', () => {
+  it('emits decoded request and response URLs through the debug logger', async () => {
+    const messages: string[] = []
+    const original = globalThis.fetch
+    ChartDownloader.setDebugLogger((message) => messages.push(message))
+    globalThis.fetch = (async () =>
+      new Response(Buffer.from('TILE'), { status: 200 })) as typeof fetch
+    try {
+      const provider = makeProvider({
+        remoteUrl: 'https://example.com/{z}/{x}/{y}?q=a%20b'
+      })
+      const buffer = await ChartDownloader.fetchTileFromRemote(provider, {
+        x: 1,
+        y: 2,
+        z: 3
+      })
+      expect(buffer).to.be.instanceOf(Buffer)
+      expect(messages).to.have.length(2)
+      expect(messages[0]).to.contain('upstream tile request provider=unit')
+      expect(messages[0]).to.contain('url=https://example.com/3/1/2?q=a b')
+      expect(messages[1]).to.contain('status=200')
+    } finally {
+      globalThis.fetch = original
+      ChartDownloader.setDebugLogger(() => {})
+    }
+  })
+
   it('returns null when the provider has no remoteUrl', async () => {
     // Non-proxy providers still pass through this path from the seed job;
     // a null return is the well-defined signal, not a throw.
