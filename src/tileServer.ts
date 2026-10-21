@@ -2,7 +2,7 @@ import path from 'path'
 import { Response } from 'express'
 import { OutgoingHttpHeaders } from 'http'
 import { ChartProvider, MapSourceType } from './types'
-import { ChartDownloader } from './chartDownloader'
+import { ChartDownloader, FailureKind } from './chartDownloader'
 
 /**
  * Tile-serving HTTP helpers for the charts plugin. Each helper terminates
@@ -237,6 +237,17 @@ export const serveTileFromCacheOrRemote = async (
     { x, y, z }
   )
   if (!tile.buffer) {
+    // Upstream 404 means "this provider has no tile at this coordinate",
+    // which is normal for sparse sources (e.g. satellite imagery outside
+    // covered zoom levels). Surface that as 404 so clients render an empty
+    // tile instead of treating it as a proxy failure.
+    if (
+      tile.failure?.kind === FailureKind.HttpClient &&
+      tile.failure.status === 404
+    ) {
+      res.sendStatus(404)
+      return
+    }
     res.sendStatus(502)
     return
   }
