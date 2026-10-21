@@ -116,6 +116,16 @@ const TILE_FETCH_TIMEOUT_MS = 10000
 // it to 0 to keep mocked-503 tests fast).
 const DEFAULT_TILE_RETRY_BACKOFF_MS = 1500
 
+// Log the URL as the upstream actually receives it, including decoded query
+// parameters. Falls back to the raw string for malformed percent escapes.
+const decodeUrlForLog = (url: string): string => {
+  try {
+    return decodeURIComponent(url)
+  } catch {
+    return url
+  }
+}
+
 export class ChartSeedingManager {
   public static ActiveJobs: { [key: number]: ChartDownloader } = {}
 
@@ -176,6 +186,11 @@ export class ChartDownloader {
   // See DEFAULT_TILE_RETRY_BACKOFF_MS. Public so the test harness can drop
   // it to 0; production code should treat it as read-only.
   public static tileRetryBackoffMs: number = DEFAULT_TILE_RETRY_BACKOFF_MS
+  private static debugLog: (message: string) => void = () => {}
+
+  public static setDebugLogger(logger: (message: string) => void): void {
+    ChartDownloader.debugLog = logger
+  }
 
   private id: number = ChartDownloader.nextJobId++
 
@@ -695,12 +710,18 @@ export class ChartDownloader {
     }
 
     let lastFailure: TileFetchFailure = { kind: FailureKind.Network }
+    const logUrl = decodeUrlForLog(url)
     for (let attempt = 0; attempt < 2; attempt++) {
       if (attempt > 0) {
         await new Promise((r) =>
           setTimeout(r, ChartDownloader.tileRetryBackoffMs)
         )
       }
+      ChartDownloader.debugLog(
+        `upstream tile request provider=${provider.identifier} ` +
+          `z=${tile.z} x=${tile.x} y=${tile.y} attempt=${attempt + 1} ` +
+          `url=${logUrl}`
+      )
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
       try {
@@ -712,6 +733,11 @@ export class ChartDownloader {
         // body read was otherwise racing the timeout and could be aborted
         // mid-stream while the caller waited on arrayBuffer().
         clearTimeout(timeoutId)
+        ChartDownloader.debugLog(
+          `upstream tile response provider=${provider.identifier} ` +
+            `z=${tile.z} x=${tile.x} y=${tile.y} attempt=${attempt + 1} ` +
+            `status=${response.status} url=${logUrl}`
+        )
         if (response.ok) {
           const arrayBuffer = await response.arrayBuffer()
           return {
@@ -741,6 +767,12 @@ export class ChartDownloader {
         return { buffer: null, failure: lastFailure }
       } catch (err) {
         clearTimeout(timeoutId)
+        ChartDownloader.debugLog(
+          `upstream tile error provider=${provider.identifier} ` +
+            `z=${tile.z} x=${tile.x} y=${tile.y} attempt=${attempt + 1} ` +
+            `error=${(err as Error).name}: ${(err as Error).message} ` +
+            `url=${logUrl}`
+        )
         // AbortError vs other network errors: the timeout's controller.abort
         // throws an AbortError. Treat any other thrown error as Network.
         const isAbort =
@@ -813,5 +845,6 @@ export class ChartDownloader {
     // Skip the production 1.5s backoff for mocked-503 tests; production
     // value is restored per the constant on plugin reload.
     ChartDownloader.tileRetryBackoffMs = 0
+    ChartDownloader.debugLog = () => {}
   }
 }
