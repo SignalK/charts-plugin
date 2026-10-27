@@ -22,7 +22,10 @@ const SEEDABLE_CHART_TYPES = ['tilelayer', 'WMS', 'WMTS']
 
 function isSeedableChart(info) {
   return (
-    !!info && info.proxy === true && SEEDABLE_CHART_TYPES.includes(info.type)
+    !!info &&
+    info.proxy === true &&
+    info.cacheEnabled !== false &&
+    SEEDABLE_CHART_TYPES.includes(info.type)
   )
 }
 

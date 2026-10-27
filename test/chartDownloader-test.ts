@@ -7,7 +7,7 @@
 
 import { expect } from 'chai'
 import type { FeatureCollection } from 'geojson'
-import { ChartDownloader } from '../src/chartDownloader'
+import { ChartDownloader, TileSource } from '../src/chartDownloader'
 import {
   getTilesForGeoJSON,
   countTiles
@@ -176,5 +176,41 @@ describe('chartDownloader: fetchTileFromRemote', () => {
       z: 1
     })
     expect(result).to.equal(null)
+  })
+})
+
+describe('chartDownloader: proxy without tile caching', () => {
+  it('bypasses cache handles and disk-space checks even when storage is unavailable', async () => {
+    const provider = makeProvider({
+      cacheEnabled: false,
+      remoteUrl: 'https://tiles.example.test/{z}/{x}/{y}'
+    })
+    Object.defineProperty(provider, '_mbtilesHandle', {
+      get: () => {
+        throw new Error('Tile cache must not be accessed')
+      }
+    })
+    const originalFetch = globalThis.fetch
+    const originalDiskSpace = ChartDownloader.hasDiskSpace
+    let requests = 0
+    globalThis.fetch = async () => new Response(`remote-${++requests}`)
+    ChartDownloader.hasDiskSpace = async () => {
+      throw new Error('Disk space must not be checked')
+    }
+    try {
+      for (let i = 1; i <= 2; i++) {
+        const result = await ChartDownloader.getTileFromCacheOrRemote(
+          '/unavailable/storage',
+          provider,
+          { z: 1, x: 0, y: 0 }
+        )
+        expect(result.source).to.equal(TileSource.FetchedFromRemote)
+        expect(result.buffer?.toString()).to.equal(`remote-${i}`)
+      }
+      expect(requests).to.equal(2)
+    } finally {
+      globalThis.fetch = originalFetch
+      ChartDownloader.hasDiskSpace = originalDiskSpace
+    }
   })
 })

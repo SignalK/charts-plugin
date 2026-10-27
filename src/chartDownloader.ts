@@ -536,6 +536,17 @@ export class ChartDownloader {
       ChartDownloader.CacheStatistics.set(provider.identifier, stats)
     }
     stats.requests++
+    // Proxy-only providers must not touch storage or the shared disk-space gate.
+    if (provider.cacheEnabled === false) {
+      const { buffer, failure } =
+        await ChartDownloader.fetchTileFromRemoteDetailed(provider, tile)
+      if (buffer) {
+        stats.misses++
+        return { buffer, source: TileSource.FetchedFromRemote, failure }
+      }
+      stats.failures++
+      return { buffer: null, source: TileSource.None, failure }
+    }
     // Try MBTiles cache first
     if (!overwrite) {
       const mbtilesBuffer = await ChartDownloader.getTileFromMbTiles(
