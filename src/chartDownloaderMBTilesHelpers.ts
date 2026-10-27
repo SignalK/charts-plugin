@@ -1,16 +1,12 @@
 import { mkdirSync } from 'fs'
 import path from 'path'
-import {
-  ChartProvider,
-  OnlineChartProvider,
-  MBTilesHandle,
-  MBTilesMetadata
-} from './types'
+import { MBTilesHandle, MBTilesMetadata, TileStoreHandle } from './types'
 import type { FeatureCollection, Polygon, Feature } from 'geojson'
 import bbox from '@turf/bbox'
 import booleanIntersects from '@turf/boolean-intersects'
 import {
   Tile,
+  getTilesForGeoJSON,
   lonLatToTileXY,
   tileToBBox,
   bboxPolygon
@@ -43,10 +39,126 @@ type TileRow = {
   tile_row: number
 }
 
+export interface MbtilesOpenInfo {
+  name: string
+  format?: string
+  minzoom?: number
+  maxzoom?: number
+}
+
+const readTile = (
+  handle: MBTilesHandle,
+  z: number,
+  x: number,
+  y: number
+): Promise<Buffer | null> =>
+  new Promise((resolve, reject) => {
+    handle.getTile(z, x, y, (err, tile) => {
+      if (err) {
+        if (err.message.includes('Tile does not exist')) {
+          resolve(null)
+          return
+        }
+        reject(err)
+        return
+      }
+      resolve(tile ?? null)
+    })
+  })
+
+const writeTile = (
+  handle: MBTilesHandle,
+  z: number,
+  x: number,
+  y: number,
+  data: Buffer
+): Promise<void> =>
+  new Promise((resolve, reject) => {
+    handle.putTile(z, x, y, data, (err) => {
+      if (err) reject(err)
+      else resolve()
+    })
+  })
+
+const flushHandle = (handle: MBTilesHandle): Promise<void> =>
+  new Promise((resolve, reject) => {
+    if (!handle._commit) {
+      resolve()
+      return
+    }
+    handle._commit((err) => {
+      if (err) reject(err)
+      else resolve()
+    })
+  })
+
+const requireDb = (handle: MBTilesHandle): DatabaseSync => {
+  if (!handle._db) {
+    throw new Error('MBTiles handle has no SQLite database')
+  }
+  return handle._db
+}
+
+const withStoreMethods = (handle: MBTilesHandle): TileStoreHandle => {
+  const store = handle as TileStoreHandle
+  store.flush = () => flushHandle(handle)
+  store.checkpoint = async () => {
+    await store.flush!()
+    handle._db?.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+  }
+  store.deleteTilesInPolygon = async (
+    geojson,
+    minZoom,
+    maxZoom,
+    chunkSize,
+    onProgress
+  ) => {
+    await store.flush!()
+    const db = requireDb(handle)
+    await deleteTilesInChunks(
+      db,
+      getMBTilesForPolygon(db, geojson, minZoom, maxZoom),
+      chunkSize,
+      onProgress
+    )
+  }
+  store.purgeOrphanImages = async (chunkSize, onProgress) => {
+    await store.flush!()
+    return purgeAllOrphanImages(requireDb(handle), chunkSize, onProgress)
+  }
+  store.vacuum = async () => {
+    await store.flush!()
+    vacuumMbtiles(requireDb(handle))
+  }
+  store.copyRegion = async (dest, geojson, minZoom, maxZoom, onProgress) => {
+    await store.flush!()
+    let copied = 0
+    for (const tile of getTilesForGeoJSON(geojson, minZoom, maxZoom)) {
+      const buffer = await readTile(handle, tile.z, tile.x, tile.y)
+      if (buffer) {
+        await writeTile(dest, tile.z, tile.x, tile.y, buffer)
+        copied++
+        if (copied % 100 === 0) onProgress?.(copied, 0)
+      }
+    }
+    await dest.flush?.()
+    return copied
+  }
+  store.openSibling = (filePath, info) => openOrCreateMbtiles(filePath, info)
+  const close = handle.close.bind(handle)
+  store.close = (callback) => {
+    store.flush!().then(
+      () => close(callback),
+      (error: Error) => callback(error)
+    )
+  }
+  return store
+}
+
 export async function openOrCreateMbtiles(
   mbtilesPath: string,
-  provider: OnlineChartProvider | ChartProvider
-): Promise<MBTilesHandle> {
+  provider: MbtilesOpenInfo
+): Promise<TileStoreHandle> {
   mkdirSync(path.dirname(mbtilesPath), { recursive: true })
   const MBTilesCtor = await loadMBTiles()
 
@@ -103,11 +215,36 @@ export async function openOrCreateMbtiles(
             if (err) {
               return reject(err)
             }
-            resolve(mbtiles)
+            resolve(withStoreMethods(mbtiles))
           })
         })
       }
     )
+  })
+}
+
+export async function openReadOnlyMbtiles(
+  mbtilesPath: string
+): Promise<MBTilesHandle> {
+  const MBTilesCtor = await loadMBTiles()
+
+  return new Promise((resolve, reject) => {
+    const instance = new MBTilesCtor(
+      `${mbtilesPath}?mode=ro`,
+      (err: Error | null, mbtiles: MBTilesHandle) => {
+        if (err) {
+          return reject(err)
+        }
+        mbtiles.on('error', (e: Error) => {
+          console.error(
+            `MBTiles read handle error (${mbtilesPath}):`,
+            e.message
+          )
+        })
+        resolve(mbtiles)
+      }
+    )
+    instance.on('error', reject)
   })
 }
 

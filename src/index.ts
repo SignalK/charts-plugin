@@ -16,6 +16,7 @@ import {
   JobOptions
 } from './chartDownloader'
 import { openOrCreateMbtiles } from './chartDownloaderMBTilesHelpers'
+import { TileCache } from './tileCacheClient'
 import {
   chartProviderFromTokenConfig,
   validateTokenProviderConfig
@@ -103,6 +104,8 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
     : 1
 
   let cachePath = defaultChartsPath
+  let tileCache: TileCache | undefined
+  let tileCacheClosing: Promise<void> | undefined
 
   // Chart-folder watcher state, plugin-scoped so stop()/start() cycles reset cleanly.
   // activeChartPaths / activeOnlineProviders hold the last-known config so a
@@ -448,6 +451,13 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
       for (const p of Object.values(chartProviders)) {
         if (p?._mbtilesHandle) closeMbtilesHandle(p._mbtilesHandle)
       }
+      const cache = tileCache
+      tileCache = undefined
+      if (cache) {
+        tileCacheClosing = cache.close().catch((err: Error) => {
+          app.debug(`Tile cache worker shutdown failed: ${err.message}`)
+        })
+      }
       chartProviders = {}
       sanitizedV1 = {}
       sanitizedV2 = {}
@@ -543,6 +553,17 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
     }
 
     app.setPluginStatus('Started')
+
+    if (!tileCache) {
+      if (tileCacheClosing) {
+        await tileCacheClosing
+        tileCacheClosing = undefined
+      }
+      const cache = new TileCache()
+      if (await cache.start()) {
+        tileCache = cache
+      }
+    }
 
     startWatchers()
     return loadChartProviders()
@@ -660,6 +681,37 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
       nextChartProviders[id] = provider
     }
 
+    // Hand local MBTiles handles to the worker. findCharts opened them
+    // read-only on the main thread to read metadata; serving happens on the
+    // worker so a synchronous SQLite read cannot stall the server.
+    const cache = tileCache
+    if (cache?.enabled) {
+      for (const provider of Object.values(nextChartProviders)) {
+        if (
+          provider.proxy !== true &&
+          provider._fileFormat === 'mbtiles' &&
+          provider._mbtilesHandle
+        ) {
+          try {
+            const previous = provider._mbtilesHandle
+            provider._mbtilesHandle = await cache.open(
+              provider.identifier,
+              provider._filePath,
+              'r'
+            )
+            closeMbtilesHandle(previous)
+          } catch (err) {
+            app.debug(
+              `Could not move ${provider.identifier} to the tile cache ` +
+                `worker, keeping the main-thread handle: ${
+                  (err as Error).message
+                }`
+            )
+          }
+        }
+      }
+    }
+
     // Open / create the working mbtiles cache for every proxy provider.
     // Path lives under `.working/<id>/cache.mbtiles` (excluded from the
     // scanner so it isn't read-opened concurrently with our writes).
@@ -668,10 +720,15 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
     for (const provider of Object.values(nextChartProviders)) {
       if (provider.proxy === true) {
         try {
-          provider._mbtilesHandle = await openOrCreateMbtiles(
-            workingMbtilesPath(cachePath, provider.identifier),
-            provider
-          )
+          const filePath = workingMbtilesPath(cachePath, provider.identifier)
+          provider._mbtilesHandle = cache?.enabled
+            ? await cache.open(provider.identifier, filePath, 'rw', {
+                name: provider.name,
+                format: provider.format,
+                minzoom: provider.minzoom,
+                maxzoom: provider.maxzoom
+              })
+            : await openOrCreateMbtiles(filePath, provider)
         } catch (err) {
           app.debug(
             `Could not open mbtiles cache for ${provider.identifier}: ${

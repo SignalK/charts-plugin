@@ -1,28 +1,24 @@
 import path from 'path'
-import type { DatabaseSync } from 'node:sqlite'
-import type { BBox } from 'geojson'
+import type { BBox, FeatureCollection } from 'geojson'
 import checkDiskSpace from 'check-disk-space'
-import { ChartProvider, MBTilesHandle } from './types'
+import { ChartProvider, MBTilesHandle, TileStoreHandle } from './types'
 import { lonLatToMercator, tileToBBox } from './projection'
 import { exportMbtilesPath, EXPORTS_DIR } from './cacheLayout'
 
-// All DB-touching helpers (delete / purge / vacuum / region-tile listing) need
-// the raw node:sqlite handle exposed by @signalk/mbtiles. Reaching through
-// `provider._mbtilesHandle!._db!` worked but lied about the contract: a proxy
-// provider whose mbtiles file failed to open at startup has neither, and the
-// non-null assertions papered over the resulting TypeError. Centralising here
-// gives a single descriptive failure surface and removes seven `!` operators
-// from call sites.
-function requireMbtilesDb(provider: ChartProvider): DatabaseSync {
-  const db = provider._mbtilesHandle?._db
-  if (!db) {
+function requireTileStore(provider: ChartProvider): TileStoreHandle {
+  const handle = provider._mbtilesHandle
+  if (
+    !handle?.deleteTilesInPolygon ||
+    !handle.purgeOrphanImages ||
+    !handle.vacuum
+  ) {
     throw new Error(
       `Provider "${provider.identifier}": mbtiles cache not open. ` +
         `Configure the provider with proxy:true and ensure the cache path ` +
-        `is writable; this operation needs the raw SQLite handle.`
+        `is writable; this operation needs the tile cache store.`
     )
   }
-  return db
+  return handle
 }
 
 import {
@@ -36,13 +32,7 @@ import {
 
 export type { Tile }
 
-import {
-  openOrCreateMbtiles,
-  deleteTilesInChunks,
-  getMBTilesForPolygon,
-  purgeAllOrphanImages,
-  vacuumMbtiles
-} from './chartDownloaderMBTilesHelpers'
+import { openOrCreateMbtiles } from './chartDownloaderMBTilesHelpers'
 
 export enum State {
   Stopped,
@@ -201,7 +191,11 @@ export class ChartDownloader {
 
   private regionName = 'Unnamed'
   private tiles!: TileGeneratorFactory
-  private tilesInDB!: TileGeneratorFactory
+  private region!: {
+    geojson: FeatureCollection
+    minZoom: number
+    maxZoom: number
+  }
 
   constructor(
     private cachePath: string,
@@ -221,17 +215,7 @@ export class ChartDownloader {
     const geojson = convertFeatureToGeoJSON(feature)
 
     this.tiles = () => getTilesForGeoJSON(geojson, minZoom, maxZoom)
-    // Defer the requireMbtilesDb call to factory invocation: the handle may
-    // not be open yet when initialize* runs (e.g. createJob before the
-    // proxy mbtiles is reconciled), but it must be open by the time the
-    // generator is iterated.
-    this.tilesInDB = () =>
-      getMBTilesForPolygon(
-        requireMbtilesDb(this.provider),
-        geojson,
-        minZoom,
-        maxZoom
-      )
+    this.region = { geojson, minZoom, maxZoom }
     this.totalTiles = countTilesAdaptiveIterative(geojson, minZoom, maxZoom)
     this.state = State.Stopped
     this.regionName = feature?.properties?.name ?? 'Unnamed'
@@ -245,13 +229,7 @@ export class ChartDownloader {
   ): Promise<void> {
     const geojson = convertBboxToGeoJSON(bbox)
     this.tiles = () => getTilesForGeoJSON(geojson, minZoom, maxZoom)
-    this.tilesInDB = () =>
-      getMBTilesForPolygon(
-        requireMbtilesDb(this.provider),
-        geojson,
-        minZoom,
-        maxZoom
-      )
+    this.region = { geojson, minZoom, maxZoom }
     this.totalTiles = countTilesAdaptiveIterative(geojson, minZoom, maxZoom)
     this.state = State.Stopped
     this.areaDescription = `BBox: [${bbox
@@ -400,18 +378,42 @@ export class ChartDownloader {
           throw new Error('Insufficient disk space for mbtiles export')
         }
 
-        const mbtiles = await openOrCreateMbtiles(filePath, this.provider)
-        const iterator = this.tiles()
-        for (const tile of iterator) {
-          const buffer = await ChartDownloader.getTileFromMbTiles(
-            this.provider._mbtilesHandle!,
-            tile
-          )
-          if (buffer) {
-            await ChartDownloader.cacheTileToMbTiles(mbtiles, tile, buffer)
-          }
+        const source = this.provider._mbtilesHandle
+        if (!source) {
+          throw new Error('Provider has no mbtiles cache to export')
         }
-        mbtiles._db?.exec('PRAGMA wal_checkpoint(TRUNCATE);')
+        const dest: TileStoreHandle = source.openSibling
+          ? await source.openSibling(filePath, {
+              name: this.provider.name,
+              format: this.provider.format,
+              minzoom: this.provider.minzoom,
+              maxzoom: this.provider.maxzoom
+            })
+          : await openOrCreateMbtiles(filePath, this.provider)
+        try {
+          if (source.copyRegion) {
+            await source.copyRegion(
+              dest,
+              this.region.geojson,
+              this.region.minZoom,
+              this.region.maxZoom
+            )
+          } else {
+            for (const tile of this.tiles()) {
+              const buffer = await ChartDownloader.getTileFromMbTiles(
+                source,
+                tile
+              )
+              if (buffer) {
+                await ChartDownloader.cacheTileToMbTiles(dest, tile, buffer)
+              }
+            }
+          }
+          await dest.checkpoint?.()
+          dest._db?.exec('PRAGMA wal_checkpoint(TRUNCATE);')
+        } finally {
+          dest.close(() => undefined)
+        }
       } catch (err) {
         // The tile seed itself already succeeded (state is Stopped); only the
         // optional export failed. Record it and rethrow so the HTTP handler's
@@ -446,14 +448,20 @@ export class ChartDownloader {
         `provider=${this.provider.identifier} totalTiles=${this.totalTiles}`
     )
     try {
-      const db = requireMbtilesDb(this.provider)
-      await deleteTilesInChunks(db, this.tilesInDB(), 1000, (deleted) => {
-        console.log(
-          `[charts-plugin] job ${this.id} deleted ${deleted} / ${this.totalTiles}`
-        )
-      })
+      const store = requireTileStore(this.provider)
+      await store.deleteTilesInPolygon!(
+        this.region.geojson,
+        this.region.minZoom,
+        this.region.maxZoom,
+        1000,
+        (deleted) => {
+          console.log(
+            `[charts-plugin] job ${this.id} deleted ${deleted} / ${this.totalTiles}`
+          )
+        }
+      )
       this.status = 'Purging orphaned images'
-      await purgeAllOrphanImages(db, 1000, (deleted, totalDeleted) => {
+      await store.purgeOrphanImages!(1000, (deleted, totalDeleted) => {
         this.deletedTiles += deleted
         console.log(
           `[charts-plugin] job ${this.id} purged ${totalDeleted} orphans ` +
@@ -462,7 +470,7 @@ export class ChartDownloader {
       })
       if (this.options.vacuum) {
         this.status = 'Vacuuming MBTiles database'
-        vacuumMbtiles(db)
+        await store.vacuum!()
       }
       this.status = 'Completed'
       this.state = State.Stopped

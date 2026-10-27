@@ -1,5 +1,6 @@
 import type { OutgoingHttpHeaders } from 'http'
 import type { DatabaseSync } from 'node:sqlite'
+import type { FeatureCollection } from 'geojson'
 
 export type MapSourceType =
   'tilelayer' | 'S-57' | 'WMS' | 'WMTS' | 'mapstyleJSON' | 'tileJSON'
@@ -42,6 +43,41 @@ export interface MBTilesHandle {
   // Internal node:sqlite database handle exposed by @signalk/mbtiles for
   // advanced operations (tile cache writes, vacuum, bulk delete).
   _db?: DatabaseSync
+  // The library batches inserts in memory; _commit flushes the pending batch.
+  _commit?: (callback: (err: Error | null) => void) => void
+}
+
+export interface TileStoreHandle extends MBTilesHandle {
+  deleteTilesInPolygon?: (
+    geojson: FeatureCollection,
+    minZoom: number,
+    maxZoom: number,
+    chunkSize: number,
+    onProgress?: (deleted: number) => void
+  ) => Promise<void>
+  purgeOrphanImages?: (
+    chunkSize: number,
+    onProgress?: (deleted: number, total: number) => void
+  ) => Promise<number>
+  vacuum?: () => Promise<void>
+  checkpoint?: () => Promise<void>
+  flush?: () => Promise<void>
+  copyRegion?: (
+    dest: TileStoreHandle,
+    geojson: FeatureCollection,
+    minZoom: number,
+    maxZoom: number,
+    onProgress?: (done: number, total: number) => void
+  ) => Promise<number>
+  openSibling?: (
+    filePath: string,
+    info: {
+      name: string
+      format?: string
+      minzoom?: number
+      maxzoom?: number
+    }
+  ) => Promise<TileStoreHandle>
 }
 
 // MBTiles metadata rows relevant to the plugin. `bounds` is commonly a
@@ -62,7 +98,7 @@ export interface MBTilesMetadata {
 export interface ChartProvider {
   _fileFormat?: 'mbtiles' | 'directory'
   _filePath: string
-  _mbtilesHandle?: MBTilesHandle
+  _mbtilesHandle?: TileStoreHandle
   _flipY?: boolean
   // Optional handle for token-based providers that fetch a token from a
   // separate endpoint and template it into the tile URL / headers per
