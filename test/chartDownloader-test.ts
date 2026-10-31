@@ -168,6 +168,29 @@ describe('chartDownloader: getTilesForGeoJSON', () => {
 })
 
 describe('chartDownloader: fetchTileFromRemote', () => {
+  it('expands sharded host ranges in the remote URL', async () => {
+    const calls: string[] = []
+    const original = globalThis.fetch
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      calls.push(typeof input === 'string' ? input : input.toString())
+      return new Response(Buffer.from('TILE'), { status: 200 })
+    }) as typeof fetch
+    try {
+      const provider = makeProvider({
+        remoteUrl: 'https://mt{0-3}.example.com/{z}/{x}/{y}'
+      })
+      const buffer = await ChartDownloader.fetchTileFromRemote(provider, {
+        x: 1,
+        y: 2,
+        z: 3
+      })
+      expect(buffer).to.be.instanceOf(Buffer)
+      expect(calls[0]).to.match(/^https:\/\/mt[0-3]\.example\.com\/3\/1\/2$/)
+    } finally {
+      globalThis.fetch = original
+    }
+  })
+
   it('returns null when the provider has no remoteUrl', async () => {
     // Non-proxy providers still pass through this path from the seed job;
     // a null return is the well-defined signal, not a throw.

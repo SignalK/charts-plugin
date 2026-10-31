@@ -108,6 +108,8 @@ export type FailureCounts = Partial<Record<FailureKind, number>>
 // Per-provider override available via OnlineChartProvider.timeoutMs and
 // TokenProviderConfig.tile.timeoutMs (added on the same change).
 const TILE_FETCH_TIMEOUT_MS = 10000
+// Sharded remote hosts in provider URLs, e.g. mt{0-3}.google.com.
+const URL_RANGE_PLACEHOLDER = /\{(\d+)-(\d+)\}/g
 // Default backoff before a single retry on a transient 5xx (502/503).
 // Picked to be long enough that an upstream momentary blip clears, short
 // enough that 32 workers don't all stall on a hard outage. Configurable
@@ -671,6 +673,11 @@ export class ChartDownloader {
       .replace('{x}', tile.x.toString())
       .replace('{y}', tile.y.toString())
       .replace('{-y}', (Math.pow(2, tile.z) - 1 - tile.y).toString())
+      .replace(URL_RANGE_PLACEHOLDER, (_, lo: string, hi: string) => {
+        const a = parseInt(lo, 10)
+        const b = parseInt(hi, 10)
+        return String(a + Math.floor(Math.random() * (b - a + 1)))
+      })
 
     // Support {bbox} (EPSG:4326) and {bbox_3857} (EPSG:3857) for WMS-style sources.
     // {bbox} emits minLon,minLat,maxLon,maxLat — this is WMS 1.1.1 order, and also
