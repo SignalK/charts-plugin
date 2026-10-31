@@ -1,7 +1,6 @@
 import path from 'path'
 import type { DatabaseSync } from 'node:sqlite'
 import type { BBox } from 'geojson'
-import checkDiskSpace from 'check-disk-space'
 import { ChartProvider, MBTilesHandle } from './types'
 import { lonLatToMercator, tileToBBox } from './projection'
 import { exportMbtilesPath, EXPORTS_DIR } from './cacheLayout'
@@ -784,6 +783,9 @@ export class ChartDownloader {
     }
 
     try {
+      // check-disk-space is ESM-only and exports no require entry, so this
+      // CommonJS build can only reach it through a real dynamic import.
+      const { checkDiskSpace } = await import('check-disk-space')
       const { free } = await checkDiskSpace(path)
       ChartDownloader.lastDiskSpaceResult =
         free >= ChartDownloader.MINIMUM_FREE_DISK_SPACE

@@ -5,6 +5,8 @@
  * plugin-test.ts.
  */
 
+import os from 'os'
+import path from 'path'
 import { expect } from 'chai'
 import type { FeatureCollection } from 'geojson'
 import { ChartDownloader } from '../src/chartDownloader'
@@ -176,5 +178,26 @@ describe('chartDownloader: fetchTileFromRemote', () => {
       z: 1
     })
     expect(result).to.equal(null)
+  })
+})
+
+describe('chartDownloader: hasDiskSpace', () => {
+  beforeEach(() => {
+    ChartDownloader.resetForTests()
+    // Clear the seeded result so a passing test proves a real disk check ran.
+    ;(
+      ChartDownloader as unknown as { lastDiskSpaceResult: boolean }
+    ).lastDiskSpaceResult = false
+  })
+
+  // Real-world case: the tile cache and exports directories on a normal disk.
+  it('reports space for an existing directory', async () => {
+    expect(await ChartDownloader.hasDiskSpace(os.tmpdir())).to.equal(true)
+  })
+
+  // The charts path may not exist yet before the first tile is cached.
+  it('falls back to the nearest existing parent of a missing path', async () => {
+    const missing = path.join(os.tmpdir(), 'charts-plugin-missing', 'cache')
+    expect(await ChartDownloader.hasDiskSpace(missing)).to.equal(true)
   })
 })
