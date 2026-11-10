@@ -13,11 +13,17 @@ import {
   SEEDABLE_SOURCE_TYPES,
   isAllowedTileFormat,
   isMbtilesTileMissing,
+  serveTileFromCacheOrRemote,
   validateBBox,
   validateMaxZoom,
   validateSeedableProvider,
   validateTileCoords
 } from '../src/tileServer'
+import {
+  ChartDownloader,
+  FailureKind,
+  TileSource
+} from '../src/chartDownloader'
 import { ChartProvider, MapSourceType } from '../src/types'
 
 describe('tileServer: validateTileCoords', () => {
@@ -173,6 +179,81 @@ describe('tileServer: isMbtilesTileMissing', () => {
 
   it('does not match unrelated errors', () => {
     expect(isMbtilesTileMissing(new Error('SQLITE_CORRUPT'))).to.equal(false)
+  })
+})
+
+describe('tileServer: serveTileFromCacheOrRemote', () => {
+  const provider: ChartProvider = {
+    _filePath: '',
+    identifier: 'proxy-test',
+    name: 'Proxy Test',
+    description: '',
+    type: 'tilelayer',
+    scale: 250000,
+    format: 'png',
+    proxy: true,
+    remoteUrl: 'https://example.com/{z}/{x}/{y}.png'
+  }
+
+  const makeRes = () => {
+    let status: number | undefined
+    const res = {
+      sendStatus(code: number) {
+        status = code
+        return res
+      },
+      set() {
+        return res
+      },
+      send() {
+        return res
+      }
+    }
+    return {
+      res: res as unknown as Parameters<typeof serveTileFromCacheOrRemote>[0],
+      status: () => status
+    }
+  }
+
+  const stubTileResult = (
+    result: Awaited<ReturnType<typeof ChartDownloader.getTileFromCacheOrRemote>>
+  ) => {
+    const original = ChartDownloader.getTileFromCacheOrRemote
+    ChartDownloader.getTileFromCacheOrRemote = (async () =>
+      result) as typeof ChartDownloader.getTileFromCacheOrRemote
+    return () => {
+      ChartDownloader.getTileFromCacheOrRemote = original
+    }
+  }
+
+  it('returns 404 when the upstream has no tile', async () => {
+    const restore = stubTileResult({
+      buffer: null,
+      source: TileSource.None,
+      failure: { kind: FailureKind.HttpClient, status: 404 }
+    })
+    try {
+      const { res, status } = makeRes()
+      await serveTileFromCacheOrRemote(res, '/tmp', provider, 1, 1, 1)
+      expect(status()).to.equal(404)
+    } finally {
+      restore()
+    }
+  })
+
+  it('returns 502 for other upstream failures', async () => {
+    const restore = stubTileResult({
+      buffer: null,
+      source: TileSource.None,
+      failure: { kind: FailureKind.HttpServer, status: 500 }
+    })
+    try {
+      const { res, status } = makeRes()
+      await serveTileFromCacheOrRemote(res, '/tmp', provider, 1, 1, 1)
+      expect(status()).to.equal(502)
+    } finally {
+      restore()
+    }
   })
 })
 
