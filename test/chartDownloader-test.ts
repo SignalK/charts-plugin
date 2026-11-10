@@ -9,7 +9,11 @@ import os from 'os'
 import path from 'path'
 import { expect } from 'chai'
 import type { FeatureCollection } from 'geojson'
-import { ChartDownloader } from '../src/chartDownloader'
+import {
+  ChartDownloader,
+  DEFAULT_USER_AGENT,
+  withDefaultUserAgent
+} from '../src/chartDownloader'
 import {
   getTilesForGeoJSON,
   countTiles
@@ -225,5 +229,57 @@ describe('chartDownloader: hasDiskSpace', () => {
   it('falls back to the nearest existing parent of a missing path', async () => {
     const missing = path.join(os.tmpdir(), 'charts-plugin-missing', 'cache')
     expect(await ChartDownloader.hasDiskSpace(missing)).to.equal(true)
+  })
+})
+
+describe('chartDownloader: upstream User-Agent', () => {
+  type Call = { url: string; init: RequestInit | undefined }
+  let calls: Call[]
+  let original: typeof fetch
+  beforeEach(() => {
+    calls = []
+    original = globalThis.fetch
+    globalThis.fetch = (async (
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      calls.push({ url: String(input), init })
+      return new Response(new Uint8Array([1, 2, 3]), { status: 200 })
+    }) as typeof fetch
+  })
+  afterEach(() => {
+    globalThis.fetch = original
+  })
+  const sentHeaders = () => calls[0]!.init!.headers as { [k: string]: string }
+
+  // OSM's tile servers block Node's default "node" agent with a 200 "Access
+  // blocked" PNG, so a provider without headers must still identify itself.
+  it('sends the plugin User-Agent when the provider sets none', async () => {
+    const provider = makeProvider({
+      remoteUrl: 'https://tile.example.org/{z}/{x}/{y}.png'
+    })
+    await ChartDownloader.fetchTileFromRemote(provider, { x: 1, y: 2, z: 3 })
+    expect(sentHeaders()['User-Agent']).to.equal(DEFAULT_USER_AGENT)
+    expect(DEFAULT_USER_AGENT).to.match(
+      /^signalk-charts-plugin\/\d+\.\d+\.\d+ /
+    )
+  })
+
+  it('keeps a configured User-Agent in any case and adds no second one', async () => {
+    const provider = makeProvider({
+      remoteUrl: 'https://tile.example.org/{z}/{x}/{y}.png',
+      headers: { 'user-agent': 'MyBoat/1.0', 'X-Key': 'k' }
+    })
+    await ChartDownloader.fetchTileFromRemote(provider, { x: 1, y: 2, z: 3 })
+    expect(sentHeaders()).to.deep.equal({
+      'user-agent': 'MyBoat/1.0',
+      'X-Key': 'k'
+    })
+  })
+
+  it('does not mutate the provider headers', () => {
+    const headers = { 'X-Key': 'k' }
+    withDefaultUserAgent(headers)
+    expect(headers).to.deep.equal({ 'X-Key': 'k' })
   })
 })

@@ -1,3 +1,4 @@
+import fs from 'fs'
 import path from 'path'
 import type { DatabaseSync } from 'node:sqlite'
 import type { BBox } from 'geojson'
@@ -42,6 +43,36 @@ import {
   purgeAllOrphanImages,
   vacuumMbtiles
 } from './chartDownloaderMBTilesHelpers'
+
+const pluginVersion = (): string => {
+  try {
+    const pkg = JSON.parse(
+      fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')
+    ) as { version?: string }
+    return pkg.version ?? 'unknown'
+  } catch {
+    return 'unknown'
+  }
+}
+
+/**
+ * Sent upstream when a provider configures no User-Agent of its own.
+ * Without it Node's fetch identifies as plain `node`, which public tile
+ * servers block: tile.openstreetmap.org answers with HTTP 200 and an
+ * "Access blocked" PNG that is then cached like a real tile.
+ */
+export const DEFAULT_USER_AGENT = `signalk-charts-plugin/${pluginVersion()} (+https://github.com/SignalK/charts-plugin)`
+
+/** Provider headers plus DEFAULT_USER_AGENT unless one is already set (any case). */
+export const withDefaultUserAgent = (
+  headers: { [key: string]: string } | undefined
+): { [key: string]: string } => {
+  const out = { ...(headers ?? {}) }
+  if (!Object.keys(out).some((k) => k.toLowerCase() === 'user-agent')) {
+    out['User-Agent'] = DEFAULT_USER_AGENT
+  }
+  return out
+}
 
 export enum State {
   Stopped,
@@ -725,7 +756,7 @@ export class ChartDownloader {
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
       try {
         const response = await fetch(url, {
-          headers: provider.headers,
+          headers: withDefaultUserAgent(provider.headers),
           signal: controller.signal
         })
         // Clear the abort timer as soon as the response head is in. A long
