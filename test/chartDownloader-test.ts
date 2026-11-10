@@ -172,7 +172,7 @@ describe('chartDownloader: getTilesForGeoJSON', () => {
 })
 
 describe('chartDownloader: fetchTileFromRemote', () => {
-  it('emits decoded request and response URLs through the debug logger', async () => {
+  it('emits redacted, decoded request and response URLs through the debug logger', async () => {
     const messages: string[] = []
     const original = globalThis.fetch
     ChartDownloader.setDebugLogger((message) => messages.push(message))
@@ -180,7 +180,7 @@ describe('chartDownloader: fetchTileFromRemote', () => {
       new Response(Buffer.from('TILE'), { status: 200 })) as typeof fetch
     try {
       const provider = makeProvider({
-        remoteUrl: 'https://example.com/{z}/{x}/{y}?q=a%20b'
+        remoteUrl: 'https://user:pw@example.com/a%20b/{z}/{x}/{y}?key=SECRET'
       })
       const buffer = await ChartDownloader.fetchTileFromRemote(provider, {
         x: 1,
@@ -190,8 +190,13 @@ describe('chartDownloader: fetchTileFromRemote', () => {
       expect(buffer).to.be.instanceOf(Buffer)
       expect(messages).to.have.length(2)
       expect(messages[0]).to.contain('upstream tile request provider=unit')
-      expect(messages[0]).to.contain('url=https://example.com/3/1/2?q=a b')
+      expect(messages[0]).to.contain('url=https://example.com/a b/3/1/2')
       expect(messages[1]).to.contain('status=200')
+      // Query strings and userinfo carry API keys and tokens.
+      for (const message of messages) {
+        expect(message).to.not.contain('SECRET')
+        expect(message).to.not.contain('pw@')
+      }
     } finally {
       globalThis.fetch = original
       ChartDownloader.setDebugLogger(() => {})

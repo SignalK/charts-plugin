@@ -43,6 +43,7 @@ import {
   purgeAllOrphanImages,
   vacuumMbtiles
 } from './chartDownloaderMBTilesHelpers'
+import { redactUrl } from './tokenProvider'
 
 const pluginVersion = (): string => {
   try {
@@ -146,13 +147,15 @@ const TILE_FETCH_TIMEOUT_MS = 10000
 // it to 0 to keep mocked-503 tests fast).
 const DEFAULT_TILE_RETRY_BACKOFF_MS = 1500
 
-// Log the URL as the upstream actually receives it, including decoded query
-// parameters. Falls back to the raw string for malformed percent escapes.
-const decodeUrlForLog = (url: string): string => {
+// Log the URL without its query string or userinfo, which is where providers
+// put API keys and tokens, and with the path percent-decoded for reading.
+// Falls back to the redacted string for malformed percent escapes.
+const urlForLog = (url: string): string => {
+  const redacted = redactUrl(url)
   try {
-    return decodeURIComponent(url)
+    return decodeURIComponent(redacted)
   } catch {
-    return url
+    return redacted
   }
 }
 
@@ -740,7 +743,7 @@ export class ChartDownloader {
     }
 
     let lastFailure: TileFetchFailure = { kind: FailureKind.Network }
-    const logUrl = decodeUrlForLog(url)
+    const logUrl = urlForLog(url)
     for (let attempt = 0; attempt < 2; attempt++) {
       if (attempt > 0) {
         await new Promise((r) =>
