@@ -172,6 +172,29 @@ describe('chartDownloader: getTilesForGeoJSON', () => {
 })
 
 describe('chartDownloader: fetchTileFromRemote', () => {
+  it('expands sharded host ranges in the remote URL', async () => {
+    const calls: string[] = []
+    const original = globalThis.fetch
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      calls.push(typeof input === 'string' ? input : input.toString())
+      return new Response(Buffer.from('TILE'), { status: 200 })
+    }) as typeof fetch
+    try {
+      const provider = makeProvider({
+        remoteUrl: 'https://mt{0-3}.example.com/{z}/{x}/{y}'
+      })
+      const buffer = await ChartDownloader.fetchTileFromRemote(provider, {
+        x: 1,
+        y: 2,
+        z: 3
+      })
+      expect(buffer).to.be.instanceOf(Buffer)
+      expect(calls[0]).to.match(/^https:\/\/mt[0-3]\.example\.com\/3\/1\/2$/)
+    } finally {
+      globalThis.fetch = original
+    }
+  })
+
   it('emits redacted, decoded request and response URLs through the debug logger', async () => {
     const messages: string[] = []
     const original = globalThis.fetch
