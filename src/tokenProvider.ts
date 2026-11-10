@@ -27,7 +27,7 @@ const RAW_TOKEN_PLACEHOLDER = /\{token\}/g
 // userinfo (https://user:pass@host); the host alone is enough context
 // for an admin to recognise which provider failed without the secrets
 // landing in shared logs.
-function redactUrl(raw: string): string {
+export function redactUrl(raw: string): string {
   try {
     const u = new URL(raw)
     return `${u.protocol}//${u.host}${u.pathname}`

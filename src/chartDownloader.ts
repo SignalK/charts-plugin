@@ -1,3 +1,4 @@
+import fs from 'fs'
 import path from 'path'
 import type { DatabaseSync } from 'node:sqlite'
 import type { BBox } from 'geojson'
@@ -42,6 +43,37 @@ import {
   purgeAllOrphanImages,
   vacuumMbtiles
 } from './chartDownloaderMBTilesHelpers'
+import { redactUrl } from './tokenProvider'
+
+const pluginVersion = (): string => {
+  try {
+    const pkg = JSON.parse(
+      fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')
+    ) as { version?: string }
+    return pkg.version ?? 'unknown'
+  } catch {
+    return 'unknown'
+  }
+}
+
+/**
+ * Sent upstream when a provider configures no User-Agent of its own.
+ * Without it Node's fetch identifies as plain `node`, which public tile
+ * servers block: tile.openstreetmap.org answers with HTTP 200 and an
+ * "Access blocked" PNG that is then cached like a real tile.
+ */
+export const DEFAULT_USER_AGENT = `signalk-charts-plugin/${pluginVersion()} (+https://github.com/SignalK/charts-plugin)`
+
+/** Provider headers plus DEFAULT_USER_AGENT unless one is already set (any case). */
+export const withDefaultUserAgent = (
+  headers: { [key: string]: string } | undefined
+): { [key: string]: string } => {
+  const out = { ...(headers ?? {}) }
+  if (!Object.keys(out).some((k) => k.toLowerCase() === 'user-agent')) {
+    out['User-Agent'] = DEFAULT_USER_AGENT
+  }
+  return out
+}
 
 export enum State {
   Stopped,
@@ -117,6 +149,18 @@ const URL_RANGE_PLACEHOLDER = /\{(\d+)-(\d+)\}/g
 // it to 0 to keep mocked-503 tests fast).
 const DEFAULT_TILE_RETRY_BACKOFF_MS = 1500
 
+// Log the URL without its query string or userinfo, which is where providers
+// put API keys and tokens, and with the path percent-decoded for reading.
+// Falls back to the redacted string for malformed percent escapes.
+const urlForLog = (url: string): string => {
+  const redacted = redactUrl(url)
+  try {
+    return decodeURIComponent(redacted)
+  } catch {
+    return redacted
+  }
+}
+
 export class ChartSeedingManager {
   public static ActiveJobs: { [key: number]: ChartDownloader } = {}
 
@@ -177,6 +221,11 @@ export class ChartDownloader {
   // See DEFAULT_TILE_RETRY_BACKOFF_MS. Public so the test harness can drop
   // it to 0; production code should treat it as read-only.
   public static tileRetryBackoffMs: number = DEFAULT_TILE_RETRY_BACKOFF_MS
+  private static debugLog: (message: string) => void = () => {}
+
+  public static setDebugLogger(logger: (message: string) => void): void {
+    ChartDownloader.debugLog = logger
+  }
 
   private id: number = ChartDownloader.nextJobId++
 
@@ -701,23 +750,34 @@ export class ChartDownloader {
     }
 
     let lastFailure: TileFetchFailure = { kind: FailureKind.Network }
+    const logUrl = urlForLog(url)
     for (let attempt = 0; attempt < 2; attempt++) {
       if (attempt > 0) {
         await new Promise((r) =>
           setTimeout(r, ChartDownloader.tileRetryBackoffMs)
         )
       }
+      ChartDownloader.debugLog(
+        `upstream tile request provider=${provider.identifier} ` +
+          `z=${tile.z} x=${tile.x} y=${tile.y} attempt=${attempt + 1} ` +
+          `url=${logUrl}`
+      )
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
       try {
         const response = await fetch(url, {
-          headers: provider.headers,
+          headers: withDefaultUserAgent(provider.headers),
           signal: controller.signal
         })
         // Clear the abort timer as soon as the response head is in. A long
         // body read was otherwise racing the timeout and could be aborted
         // mid-stream while the caller waited on arrayBuffer().
         clearTimeout(timeoutId)
+        ChartDownloader.debugLog(
+          `upstream tile response provider=${provider.identifier} ` +
+            `z=${tile.z} x=${tile.x} y=${tile.y} attempt=${attempt + 1} ` +
+            `status=${response.status} url=${logUrl}`
+        )
         if (response.ok) {
           const arrayBuffer = await response.arrayBuffer()
           return {
@@ -747,6 +807,12 @@ export class ChartDownloader {
         return { buffer: null, failure: lastFailure }
       } catch (err) {
         clearTimeout(timeoutId)
+        ChartDownloader.debugLog(
+          `upstream tile error provider=${provider.identifier} ` +
+            `z=${tile.z} x=${tile.x} y=${tile.y} attempt=${attempt + 1} ` +
+            `error=${(err as Error).name}: ${(err as Error).message} ` +
+            `url=${logUrl}`
+        )
         // AbortError vs other network errors: the timeout's controller.abort
         // throws an AbortError. Treat any other thrown error as Network.
         const isAbort =
@@ -822,5 +888,6 @@ export class ChartDownloader {
     // Skip the production 1.5s backoff for mocked-503 tests; production
     // value is restored per the constant on plugin reload.
     ChartDownloader.tileRetryBackoffMs = 0
+    ChartDownloader.debugLog = () => {}
   }
 }

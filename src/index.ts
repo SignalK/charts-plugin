@@ -472,6 +472,7 @@ const createPlugin = (app: ChartProviderApp): Plugin => {
 
     app.debug(`** loaded config: ${config}`)
     props = { ...config }
+    ChartDownloader.setDebugLogger((message) => app.debug(message))
 
     urlBase = `${app.config.ssl ? 'https' : 'http'}://localhost:${
       'getExternalPort' in app.config ? app.config.getExternalPort() : 3000
