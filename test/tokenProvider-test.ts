@@ -120,11 +120,46 @@ describe('TokenProvider: token TTL cache', () => {
       expect(messages).to.have.length(3)
       expect(messages[0]).to.contain('token request provider=test')
       expect(messages[1]).to.contain('token response provider=test status=200')
-      expect(messages[2]).to.contain(
-        'token response body provider=test: {"access":"abc"}'
-      )
+      expect(messages[2]).to.contain('json fields=access')
     } finally {
       mock.restore()
+    }
+  })
+
+  // Debug logs get pasted into support threads, so neither the credentials
+  // sent to the token endpoint nor the token it returns may appear in them.
+  it('keeps credentials and tokens out of the debug log', async () => {
+    const messages: string[] = []
+    const app = {
+      debug: (message: string) => messages.push(message),
+      enabled: false
+    } as unknown as ServerAPI
+    for (const body of [
+      JSON.stringify({ access: 'TOKEN-VALUE' }),
+      'TOKEN-VALUE'
+    ]) {
+      const mock = installFetchMock(() => new Response(body, { status: 200 }))
+      try {
+        const dp = makeTokenProvider(
+          {
+            ...BASE_CONFIG,
+            tokenEndpoint: {
+              ...BASE_CONFIG.tokenEndpoint,
+              url: 'https://token.example.com/issue?api_key=URL-SECRET',
+              headers: { Authorization: 'Basic HEADER-SECRET' }
+            }
+          },
+          app
+        )
+        await dp.ensureFreshToken()
+      } finally {
+        mock.restore()
+      }
+    }
+    const log = messages.join('\n')
+    expect(log).to.contain('raw token')
+    for (const secret of ['TOKEN-VALUE', 'URL-SECRET', 'HEADER-SECRET']) {
+      expect(log).to.not.contain(secret)
     }
   })
 

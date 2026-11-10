@@ -105,13 +105,12 @@ export class TokenProvider {
     // as an invalid URL.
     const url = this.applyRangeTemplate(ep.url)
     const method = ep.method ?? 'GET'
-    // Debug trace for token-endpoint troubleshooting. This deliberately
-    // includes the response body, which is the token itself; only enable
-    // debug logging when diagnosing provider auth, not in normal operation.
+    // Debug trace for token-endpoint troubleshooting. Request headers and the
+    // response body carry credentials and the token itself, so only their
+    // shape is logged: debug logs end up in shared support threads.
     this.app.debug(
       `token request provider=${this.config.identifier} ` +
-        `method=${method} url=${redactUrl(url)} ` +
-        `headers=${JSON.stringify(ep.headers ?? {})}`
+        `method=${method} url=${redactUrl(url)}`
     )
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -126,14 +125,12 @@ export class TokenProvider {
     } finally {
       clearTimeout(timer)
     }
+    const bodyText = await res.text()
     this.app.debug(
       `token response provider=${this.config.identifier} ` +
         `status=${res.status} statusText=${res.statusText} ` +
-        `headers=${JSON.stringify(Object.fromEntries(res.headers.entries()))}`
-    )
-    const bodyText = await res.text()
-    this.app.debug(
-      `token response body provider=${this.config.identifier}: ${bodyText}`
+        `contentType=${res.headers.get('content-type') ?? ''} ` +
+        `bytes=${bodyText.length}`
     )
     if (!res.ok) {
       // Avoid embedding the full URL in the error: token endpoints often
@@ -158,11 +155,20 @@ export class TokenProvider {
       }
       this.token = next
       this.rawToken = null
+      // Field names, not values: they are what {token.<field>} templates use.
+      this.app.debug(
+        `token response provider=${this.config.identifier} ` +
+          `json fields=${Object.keys(next).join(',')}`
+      )
     } else {
       // Some endpoints return the token as the entire body with no JSON
       // envelope (for example a bare JWT). Treat the body as the token.
       this.token = {}
       this.rawToken = bodyText.trim()
+      this.app.debug(
+        `token response provider=${this.config.identifier} ` +
+          `raw token, use {token}`
+      )
     }
     this.tokenExpiry = this.clock.now() + ep.ttlSeconds * 1000
   }
