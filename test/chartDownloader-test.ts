@@ -12,6 +12,8 @@ import type { FeatureCollection } from 'geojson'
 import {
   ChartDownloader,
   DEFAULT_USER_AGENT,
+  FailureKind,
+  isNonImageContentType,
   withDefaultUserAgent
 } from '../src/chartDownloader'
 import {
@@ -236,6 +238,96 @@ describe('chartDownloader: fetchTileFromRemote', () => {
       z: 1
     })
     expect(result).to.equal(null)
+  })
+})
+
+describe('chartDownloader: non-image upstream bodies', () => {
+  let original: typeof fetch
+  beforeEach(() => {
+    original = globalThis.fetch
+  })
+  afterEach(() => {
+    globalThis.fetch = original
+  })
+
+  // OSM answers a policy violation with HTTP 200 and an HTML notice. Before
+  // this guard the body was returned as a tile and written to the MBTiles
+  // cache, where it stayed for the coordinate even after the cause was fixed.
+  it('rejects an HTML notice served with HTTP 200', async () => {
+    globalThis.fetch = (async () =>
+      new Response('<!doctype html><h1>Access blocked</h1>', {
+        status: 200,
+        headers: { 'content-type': 'text/html; charset=utf-8' }
+      })) as typeof fetch
+    const provider = makeProvider({
+      remoteUrl: 'https://tile.example.org/{z}/{x}/{y}.png'
+    })
+    const result = await ChartDownloader.fetchTileFromRemoteDetailed(provider, {
+      x: 1,
+      y: 2,
+      z: 3
+    })
+    expect(result.buffer).to.equal(null)
+    expect(result.failure.kind).to.equal(FailureKind.NotTileData)
+    expect(result.failure.status).to.equal(200)
+  })
+
+  it('accepts a tile whose response omits Content-Type', async () => {
+    // Plenty of tile endpoints label their responses badly; refusing those
+    // would break working configurations.
+    globalThis.fetch = (async () =>
+      new Response(new Uint8Array([137, 80, 78, 71]), {
+        status: 200
+      })) as typeof fetch
+    const provider = makeProvider({
+      remoteUrl: 'https://tile.example.org/{z}/{x}/{y}.png'
+    })
+    const result = await ChartDownloader.fetchTileFromRemoteDetailed(provider, {
+      x: 1,
+      y: 2,
+      z: 3
+    })
+    expect(result.buffer).to.be.instanceOf(Buffer)
+    expect(result.failure.kind).to.equal(FailureKind.None)
+  })
+
+  it('accepts an image type the provider reports explicitly', async () => {
+    globalThis.fetch = (async () =>
+      new Response(new Uint8Array([1, 2, 3]), {
+        status: 200,
+        headers: { 'content-type': 'image/jpeg' }
+      })) as typeof fetch
+    const provider = makeProvider({
+      remoteUrl: 'https://tile.example.org/{z}/{x}/{y}.jpg'
+    })
+    const result = await ChartDownloader.fetchTileFromRemoteDetailed(provider, {
+      x: 1,
+      y: 2,
+      z: 3
+    })
+    expect(result.buffer).to.be.instanceOf(Buffer)
+  })
+
+  it('classifies the content types that cannot be tile data', () => {
+    for (const type of [
+      'text/html',
+      'text/html; charset=utf-8',
+      'text/plain',
+      'application/json',
+      'application/xml',
+      'application/xhtml+xml',
+      'TEXT/HTML'
+    ]) {
+      expect(isNonImageContentType(type), type).to.equal(true)
+    }
+    for (const type of [
+      '',
+      'image/png',
+      'image/webp',
+      'application/octet-stream'
+    ]) {
+      expect(isNonImageContentType(type), type).to.equal(false)
+    }
   })
 })
 

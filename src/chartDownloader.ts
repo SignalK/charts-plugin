@@ -75,6 +75,31 @@ export const withDefaultUserAgent = (
   return out
 }
 
+/**
+ * True for content types that cannot be tile data.
+ *
+ * Tile servers answer policy violations and rate limits with an HTML page,
+ * sometimes with HTTP 200 attached (tile.openstreetmap.org's "Access
+ * blocked" notice is the usual one). Such a body must not reach the cache:
+ * the cache is consulted before the network, so one stored notice hides the
+ * real problem for that coordinate indefinitely.
+ *
+ * Only types that positively cannot be an image are rejected. A provider
+ * that sends no Content-Type at all, or a generic binary type, is still
+ * accepted — plenty of tile endpoints label their responses badly, and
+ * refusing those would break working configurations.
+ */
+export const isNonImageContentType = (contentType: string): boolean => {
+  const type = contentType.split(';')[0]!.trim().toLowerCase()
+  if (type === '') return false
+  return (
+    type.startsWith('text/') ||
+    type === 'application/json' ||
+    type === 'application/xml' ||
+    type === 'application/xhtml+xml'
+  )
+}
+
 export enum State {
   Stopped,
   Running
@@ -115,7 +140,15 @@ export enum FailureKind {
   HttpClient = 'http_4xx',
   HttpServer = 'http_5xx',
   Network = 'network',
-  NoRemoteUrl = 'no_remote_url'
+  NoRemoteUrl = 'no_remote_url',
+  /**
+   * HTTP 200, but the body is a web page rather than tile data. Tile servers
+   * answer the "you are blocked / over quota" case this way, sometimes with a
+   * 200 alongside an HTML notice. Treating that as a tile caches the notice
+   * for the coordinate for good, because the cache is consulted before the
+   * network on every later request.
+   */
+  NotTileData = 'not_tile_data'
 }
 
 export interface TileFetchFailure {
@@ -779,6 +812,24 @@ export class ChartDownloader {
             `status=${response.status} url=${logUrl}`
         )
         if (response.ok) {
+          const contentType = response.headers.get('content-type') ?? ''
+          if (isNonImageContentType(contentType)) {
+            // A blocked or rate-limited tile server answers with a page, not
+            // an image, and sometimes with 200. Caching it would hide the
+            // real problem for every later request on this coordinate.
+            ChartDownloader.debugLog(
+              `upstream tile rejected provider=${provider.identifier} ` +
+                `z=${tile.z} x=${tile.x} y=${tile.y} ` +
+                `reason=content-type content-type=${contentType} url=${logUrl}`
+            )
+            return {
+              buffer: null,
+              failure: {
+                kind: FailureKind.NotTileData,
+                status: response.status
+              }
+            }
+          }
           const arrayBuffer = await response.arrayBuffer()
           return {
             buffer: Buffer.from(arrayBuffer),
